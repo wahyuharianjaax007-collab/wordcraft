@@ -139,108 +139,127 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     let current = app.session.current_pages(&lay);
     app.ui.print.preview = app.ui.print.preview.min(total.saturating_sub(1));
 
-    ui.horizontal_top(|ui| {
+    let is_portrait = ui.ctx().content_rect().height() > ui.ctx().content_rect().width();
+
+    if is_portrait {
         ui.vertical(|ui| {
-            ui.set_width(380.0);
-            // The settings scroll on their own: the preview beside them keeps the whole height (#1156).
-            egui::ScrollArea::vertical().id_salt("print_settings").show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 8.0;
-                let native = app.services.print_native.is_some();
-                let hook = native || app.services.print.is_some();
-                // #2958: as in Word, the page's action leads the settings, in the accent the app
-                // gives a dialog's primary button: the first thing seen, and plainly a button
-                // that prints now rather than one more setting in the list below.
-                if hook
-                    && ui
-                        .add_enabled(!native || app.printing.ready(), crate::widgets::primary_button(ui, tl!("Print")).min_size(vec2(320.0, 34.0)))
-                        .clicked()
-                {
-                    let params = app.ui.print.params();
-                    let _ = app.run("ui.print", params);
-                }
-                if native {
-                    if let Some(discover) = &app.services.printers {
-                        crate::printing::show(&mut app.printing, ui, discover, |label| crate::i18n::t(label).to_owned());
-                    }
-                    app.ui.print.copies = app.printing.settings.copies;
-                } else if hook {
-                    ui.label(tl!("Send the document straight to the system print dialog, or save a copy in another format below."));
-                    ui.label(
-                        egui::RichText::new(tl!("The printer, two-sided printing and pages per sheet are chosen in that dialog.")).color(t.text_dim),
-                    );
-                } else {
-                    ui.label(tl!("Save a copy in another format. Printing goes through a PDF you can print from any viewer."));
-                }
-                if ui
-                    .add(egui::Button::new(egui::RichText::new(tl!("Save these pages as PDF…")).font(medium(13.5))).min_size(vec2(320.0, 34.0)))
-                    .clicked()
-                {
-                    app.print_pdf_dialog();
-                }
-                ui.add_space(6.0);
-
-                if native {
-                    if app.ui.print.copies > 1 {
-                        ui.add_enabled(!app.printing.busy(), egui::Checkbox::new(&mut app.ui.print.collate, tl!("Collate copies")));
-                    }
-                } else {
-                    ui.label(egui::RichText::new(tl!("Copies")).font(medium(13.0)));
-                    ui.horizontal(|ui| {
-                        let mut n = app.ui.print.copies;
-                        ui.add(egui::DragValue::new(&mut n).range(1..=wordcraft_engine::print::MAX_COPIES).speed(0.2));
-                        app.ui.print.copies = n.clamp(1, wordcraft_engine::print::MAX_COPIES);
-                        if app.ui.print.copies > 1 {
-                            ui.checkbox(&mut app.ui.print.collate, tl!("Collate copies"));
-                        }
-                    });
-                }
-
-                ui.label(egui::RichText::new(tl!("Pages")).font(medium(13.0)));
-                if choice(ui, "print_range", &mut app.ui.print.range, &RANGES) {
-                    // Show the first page that will print.
-                    app.ui.print.preview = if app.ui.print.range == "all" { 0 } else { current.0.min(total.saturating_sub(1)) };
-                }
-                if app.ui.print.range == "custom" {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut app.ui.print.pages)
-                            .hint_text(tl!("Pages like 1-3, 5"))
-                            .desired_width(260.0)
-                            .char_limit(wordcraft_engine::print::MAX_SPEC_CHARS),
-                    );
-                }
-                choice(ui, "print_parity", &mut app.ui.print.parity, &PARITIES);
-                ui.label(egui::RichText::new(tl!("Orientation")).font(medium(13.0)));
-                choice(ui, "print_orientation", &mut app.ui.print.orientation, &ORIENTATIONS);
-                // Word: Pages per sheet › Scale to paper size. Only the printout changes.
-                ui.label(egui::RichText::new(tl!("Scale to paper size")).font(medium(13.0)));
-                let papers: Vec<(&str, &str)> =
-                    std::iter::once((NO_SCALING, "No Scaling")).chain(wordcraft_geom::PAPER_SIZES.iter().map(|(n, _, _)| (*n, *n))).collect();
-                choice(ui, "print_paper", &mut app.ui.print.paper, &papers);
-
-                match wordcraft_engine::print::plan(&app.ui.print.params(), total, current) {
-                    Ok(plan) => {
-                        let msg = crate::i18n::fmt(
-                            tl!("{count} of {total} pages will print"),
-                            &[("count", &plan.chosen.to_string()), ("total", &total.to_string())],
-                        );
-                        ui.label(egui::RichText::new(msg).color(t.text_dim));
-                    }
-                    Err(e) => {
-                        ui.label(egui::RichText::new(e.to_string()).color(t.red));
-                    }
-                }
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(4.0);
-                if hook {
-                    ui.label(tl!("Or save a copy in another format:"));
-                }
-                export_formats(app, ui);
+            ui.set_width(ui.available_width());
+            egui::ScrollArea::vertical().id_salt("print_settings_portrait").show(ui, |ui| {
+                print_settings(app, ui, total, current, &t, is_portrait);
             });
+            ui.add_space(24.0);
+            ui.vertical(|ui| preview(app, ui, &lay, total));
         });
-        ui.add_space(24.0);
-        ui.vertical(|ui| preview(app, ui, &lay, total));
-    });
+    } else {
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                ui.set_width(380.0);
+                egui::ScrollArea::vertical().id_salt("print_settings").show(ui, |ui| {
+                    print_settings(app, ui, total, current, &t, is_portrait);
+                });
+            });
+            ui.add_space(24.0);
+            ui.vertical(|ui| preview(app, ui, &lay, total));
+        });
+    }
+}
+
+fn print_settings(app: &mut WordApp, ui: &mut Ui, total: usize, current: (usize, usize), t: &Tokens, is_portrait: bool) {
+    ui.spacing_mut().item_spacing.y = 8.0;
+    let native = app.services.print_native.is_some();
+    let hook = native || app.services.print.is_some();
+    
+    let btn_width = if is_portrait { ui.available_width().max(150.0) } else { 320.0 };
+
+    // #2958: as in Word, the page's action leads the settings, in the accent the app
+    // gives a dialog's primary button: the first thing seen, and plainly a button
+    // that prints now rather than one more setting in the list below.
+    if hook
+        && ui
+            .add_enabled(!native || app.printing.ready(), crate::widgets::primary_button(ui, tl!("Print")).min_size(vec2(btn_width, 34.0)))
+            .clicked()
+    {
+        let params = app.ui.print.params();
+        let _ = app.run("ui.print", params);
+    }
+    if native {
+        if let Some(discover) = &app.services.printers {
+            crate::printing::show(&mut app.printing, ui, discover, |label| crate::i18n::t(label).to_owned());
+        }
+        app.ui.print.copies = app.printing.settings.copies;
+    } else if hook {
+        ui.label(tl!("Send the document straight to the system print dialog, or save a copy in another format below."));
+        ui.label(
+            egui::RichText::new(tl!("The printer, two-sided printing and pages per sheet are chosen in that dialog.")).color(t.text_dim),
+        );
+    } else {
+        ui.label(tl!("Save a copy in another format. Printing goes through a PDF you can print from any viewer."));
+    }
+    if ui
+        .add(egui::Button::new(egui::RichText::new(tl!("Save these pages as PDF…")).font(medium(13.5))).min_size(vec2(btn_width, 34.0)))
+        .clicked()
+    {
+        app.print_pdf_dialog();
+    }
+    ui.add_space(6.0);
+
+    if native {
+        if app.ui.print.copies > 1 {
+            ui.add_enabled(!app.printing.busy(), egui::Checkbox::new(&mut app.ui.print.collate, tl!("Collate copies")));
+        }
+    } else {
+        ui.label(egui::RichText::new(tl!("Copies")).font(medium(13.0)));
+        ui.horizontal(|ui| {
+            let mut n = app.ui.print.copies;
+            ui.add(egui::DragValue::new(&mut n).range(1..=wordcraft_engine::print::MAX_COPIES).speed(0.2));
+            app.ui.print.copies = n.clamp(1, wordcraft_engine::print::MAX_COPIES);
+            if app.ui.print.copies > 1 {
+                ui.checkbox(&mut app.ui.print.collate, tl!("Collate copies"));
+            }
+        });
+    }
+
+    ui.label(egui::RichText::new(tl!("Pages")).font(medium(13.0)));
+    if choice(ui, "print_range", &mut app.ui.print.range, &RANGES) {
+        // Show the first page that will print.
+        app.ui.print.preview = if app.ui.print.range == "all" { 0 } else { current.0.min(total.saturating_sub(1)) };
+    }
+    if app.ui.print.range == "custom" {
+        ui.add(
+            egui::TextEdit::singleline(&mut app.ui.print.pages)
+                .hint_text(tl!("Pages like 1-3, 5"))
+                .desired_width(260.0)
+                .char_limit(wordcraft_engine::print::MAX_SPEC_CHARS),
+        );
+    }
+    choice(ui, "print_parity", &mut app.ui.print.parity, &PARITIES);
+    ui.label(egui::RichText::new(tl!("Orientation")).font(medium(13.0)));
+    choice(ui, "print_orientation", &mut app.ui.print.orientation, &ORIENTATIONS);
+    // Word: Pages per sheet › Scale to paper size. Only the printout changes.
+    ui.label(egui::RichText::new(tl!("Scale to paper size")).font(medium(13.0)));
+    let papers: Vec<(&str, &str)> =
+        std::iter::once((NO_SCALING, "No Scaling")).chain(wordcraft_geom::PAPER_SIZES.iter().map(|(n, _, _)| (*n, *n))).collect();
+    choice(ui, "print_paper", &mut app.ui.print.paper, &papers);
+
+    match wordcraft_engine::print::plan(&app.ui.print.params(), total, current) {
+        Ok(plan) => {
+            let msg = crate::i18n::fmt(
+                tl!("{count} of {total} pages will print"),
+                &[("count", &plan.chosen.to_string()), ("total", &total.to_string())],
+            );
+            ui.label(egui::RichText::new(msg).color(t.text_dim));
+        }
+        Err(e) => {
+            ui.label(egui::RichText::new(e.to_string()).color(t.red));
+        }
+    }
+    ui.add_space(8.0);
+    ui.separator();
+    ui.add_space(4.0);
+    if hook {
+        ui.label(tl!("Or save a copy in another format:"));
+    }
+    export_formats(app, ui);
 }
 
 /// Room around the page inside the preview pane.
@@ -332,6 +351,10 @@ pub(crate) const EXPORT_WORD_2003: &str = "wordml2003";
 
 /// The "save a copy" formats (File › Export, and below the settings on the Print page).
 pub fn export_formats(app: &mut WordApp, ui: &mut Ui) {
+    let is_portrait = ui.ctx().content_rect().height() > ui.ctx().content_rect().width();
+    let btn_width = if is_portrait { ui.available_width().max(150.0) } else { 320.0 };
+    let font = if is_portrait { regular(12.5) } else { medium(13.5) };
+
     for (label, ext) in [
         ("PDF document (*.pdf)", "pdf"),
         ("Word document (*.docx)", "docx"),
@@ -345,7 +368,7 @@ pub fn export_formats(app: &mut WordApp, ui: &mut Ui) {
         ("Plain text (*.txt)", "txt"),
         ("Page image (*.png)", "png"),
     ] {
-        if ui.add(egui::Button::new(egui::RichText::new(tl!(label)).font(medium(13.5))).min_size(vec2(320.0, 34.0))).clicked() {
+        if ui.add(egui::Button::new(egui::RichText::new(tl!(label)).font(font)).min_size(vec2(btn_width, 34.0))).clicked() {
             app.export_dialog(ext);
         }
         ui.add_space(4.0);
