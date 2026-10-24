@@ -7,7 +7,7 @@
 //!   show its own built-in file browser. Android 11+ hides documents (.docx and the like) from an
 //!   app until it has "All files access", so the app opens that settings screen when it lacks it.
 //! - No printing, no control server, no preferences file (settings reset on restart).
-//! - The on-screen keyboard appears when the page or a text box is tapped, and goes away when
+//! - The on-screen keyboard appears only when a text box is tapped or focused, and goes away when
 //!   anything else is tapped.
 //! - Back button: the first press sends Escape (closes dialogs, menus, the File screen); a second
 //!   press within a moment quits (asking about unsaved changes first).
@@ -26,8 +26,6 @@ use wordcraft_ui_egui::{FileDialogAnswer, FileDialogRequest, Services, WordApp};
 
 /// Two Back presses within this time quit the app.
 const BACK_EXIT_WINDOW: Duration = Duration::from_millis(1800);
-/// A touch that moves less than this many points is a tap, not a scroll.
-const TAP_SLOP_POINTS: f32 = 12.0;
 
 /// Where the built-in file browser starts, and what `~` means.
 fn start_dir(app: &AndroidApp) -> Option<PathBuf> {
@@ -164,10 +162,6 @@ struct AndroidShell {
     android: AndroidApp,
     /// Whether the on-screen keyboard is up.
     keyboard_shown: bool,
-    /// The last tap was on the page (or a text box over it): the keyboard may show while it is edited.
-    keyboard_wanted: bool,
-    /// Where the pointer went down, to tell a tap from a scroll when it comes up.
-    press_at: Option<egui::Pos2>,
     /// When Back was last pressed (for the press-twice-to-quit rule).
     last_back: Option<Instant>,
     /// A second Back arrived: quit on the next frame.
@@ -192,7 +186,6 @@ impl AndroidShell {
             return;
         }
         self.last_back = Some(now);
-        self.keyboard_wanted = false;
         for pressed in [true, false] {
             raw.events.push(egui::Event::Key {
                 key: egui::Key::Escape,
@@ -203,30 +196,6 @@ impl AndroidShell {
             });
         }
         self.app.status("Press Back again to exit");
-    }
-
-    /// A tap on the page asks for the keyboard; a press anywhere else takes the request back.
-    fn track_taps(&mut self, raw: &egui::RawInput) {
-        let page = self.app.canvas.canvas_rect;
-        for event in &raw.events {
-            if let egui::Event::PointerButton { pos, pressed, .. } = event {
-                let on_page = page.is_some_and(|r| r.contains(*pos));
-                if *pressed {
-                    self.press_at = Some(*pos);
-                    if !on_page {
-                        self.keyboard_wanted = false;
-                    }
-                } else if let Some(start) = self.press_at.take() {
-                    let dist = start.distance(*pos);
-                    // Jika jarak sangat kecil (Tap), izinkan keyboard. Jika besar (Swipe/Scroll), matikan.
-                    if on_page && dist < TAP_SLOP_POINTS {
-                        self.keyboard_wanted = true;
-                    } else if dist >= TAP_SLOP_POINTS {
-                        self.keyboard_wanted = false;
-                    }
-                }
-            }
-        }
     }
 
     /// Atur ukuran antarmuka secara dinamis berdasarkan orientasi layar dengan batas aman.
@@ -319,7 +288,6 @@ impl eframe::App for AndroidShell {
         if back {
             self.on_back(raw);
         }
-        self.track_taps(raw);
         self.app.raw_input_hook(raw);
     }
 
@@ -340,19 +308,9 @@ impl eframe::App for AndroidShell {
         }
         ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| self.app.ui(ui));
 
-        // The page and text boxes report where their caret is (IME output) while they take typing.
-        let caret = ui.ctx().output(|o| o.ime.as_ref().map(|ime| ime.cursor_rect));
-        let wants_keyboard = if let Some(caret) = caret {
-            match self.app.canvas.canvas_rect {
-                Some(page) if page.contains(caret.center()) => self.keyboard_wanted,
-                _ => true,
-            }
-        } else {
-            false
-        };
-        
-        // Pastikan egui benar-benar sedang meminta input teks sebelum keyboard muncul.
-        let wants_keyboard = wants_keyboard && ui.ctx().egui_wants_keyboard_input();
+        // Hanya tampilkan keyboard jika egui meminta input teks (kursor di kotak teks/dokumen).
+        // Logika manual track_taps sudah dihapus total.
+        let wants_keyboard = ui.ctx().egui_wants_keyboard_input();
 
         if wants_keyboard != self.keyboard_shown {
             self.keyboard_shown = wants_keyboard;
@@ -403,8 +361,6 @@ pub fn android_main(app: AndroidApp) {
                 app: word,
                 android,
                 keyboard_shown: false,
-                keyboard_wanted: false,
-                press_at: None,
                 last_back: None,
                 exit_requested: false,
                 was_backstage: false,
