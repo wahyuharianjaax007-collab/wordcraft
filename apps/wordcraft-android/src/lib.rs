@@ -47,6 +47,27 @@ fn status_bar_height_px(app: &AndroidApp) -> f32 {
     read().map(|px| px as f32).unwrap_or(0.0)
 }
 
+/// Memaksa Android untuk tidak pernah memunculkan keyboard secara otomatis.
+/// Ini menggantikan peran konfigurasi di Cargo.toml.
+fn force_hide_soft_input_on_startup(app: &AndroidApp) {
+    use jni::objects::{JObject, JValue};
+    let Ok(vm) = (unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }) else { return };
+    let Ok(mut env) = vm.attach_current_thread() else { return };
+    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+    
+    let result = (|| -> jni::errors::Result<()> {
+        let window = env.call_method(&activity, "getWindow", "()Landroid/view/Window;", &[])?.l()?;
+        // WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN = 0x00000002
+        // WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE = 0x00000010
+        let mode = 0x00000002 | 0x00000010;
+        env.call_method(&window, "setSoftInputMode", "(I)V", &[JValue::Int(mode)])?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = env.exception_clear();
+    }
+}
+
 fn ask_for_all_files_access(app: &AndroidApp) {
     use jni::objects::{JObject, JValue};
     let Ok(vm) = (unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }) else { return };
@@ -170,19 +191,21 @@ impl AndroidShell {
     fn track_taps(&mut self, raw: &egui::RawInput) {
         let page = self.app.canvas.canvas_rect;
         for event in &raw.events {
-            if let egui::Event::PointerButton { pos, pressed, .. } = event {
-                let on_page = page.is_some_and(|r| r.contains(*pos));
-                if *pressed {
-                    self.press_at = Some(*pos);
-                    if !on_page {
-                        self.keyboard_wanted = false;
-                    }
-                } else if let Some(start) = self.press_at.take() {
-                    let dist = start.distance(*pos);
-                    if on_page && dist < TAP_SLOP_POINTS {
-                        self.keyboard_wanted = true;
-                    } else if dist >= TAP_SLOP_POINTS {
-                        self.keyboard_wanted = false;
+            if let egui::Event::PointerButton { pos, pressed, button, .. } = event {
+                if *button == egui::PointerButton::Primary {
+                    let on_page = page.is_some_and(|r| r.contains(*pos));
+                    if *pressed {
+                        self.press_at = Some(*pos);
+                        if !on_page {
+                            self.keyboard_wanted = false;
+                        }
+                    } else if let Some(start) = self.press_at.take() {
+                        let dist = start.distance(*pos);
+                        if on_page && dist < TAP_SLOP_POINTS {
+                            self.keyboard_wanted = true;
+                        } else {
+                            self.keyboard_wanted = false;
+                        }
                     }
                 }
             }
@@ -293,13 +316,17 @@ impl eframe::App for AndroidShell {
         }
         ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| self.app.ui(ui));
 
-        // PERBAIKAN MUTLAK KEYBOARD
-        // Kita paksa keyboard HANYA mengikuti keyboard_wanted (hasil tap di halaman),
-        // KECUALI kalau user lagi buka dialog/backstage, kita serahkan ke egui sepenuhnya.
         let wants_keyboard = if self.app.ui.backstage || self.app.dialog.is_some() {
             ui.ctx().egui_wants_keyboard_input()
+        } else if self.keyboard_wanted {
+            true
         } else {
-            self.keyboard_wanted
+            let canvas_focused = self.app.canvas.widget_id.is_some_and(|id| ui.ctx().memory(|m| m.has_focus(id)));
+            if canvas_focused {
+                false
+            } else {
+                ui.ctx().egui_wants_keyboard_input()
+            }
         };
 
         if wants_keyboard != self.keyboard_shown {
@@ -329,6 +356,7 @@ pub fn android_main(app: AndroidApp) {
     }
     
     ask_for_all_files_access(&app);
+    force_hide_soft_input_on_startup(&app); // INI DIA SATPAM DARI SISTEM ANDROID
 
     let status_bar_px = status_bar_height_px(&app);
     let options = eframe::NativeOptions { android_app: Some(app.clone()), ..Default::default() };
