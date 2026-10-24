@@ -50,3 +50,9 @@ max_sdk_version = 29
 [[package.metadata.android.uses_permission]]
 name = "android.permission.WRITE_EXTERNAL_STORAGE"
 max_sdk_version = 29
+
+[package.metadata.android]
+apk_name = "WordCraft"
+icon = "icon.png"
+window_soft_input_mode = "stateAlwaysHidden"
+# (biarkan baris lain di bawahnya tetap ada)
