@@ -175,14 +175,12 @@ fn undo_list(ui: &mut Ui, app: &mut WordApp) {
             if hovered.is_some_and(|h| i <= h) {
                 ui.painter().rect_filled(*r, 0.0, t.selection);
             }
-            // Clipped to its row: a long label never runs into the scroll bar.
             ui.painter_at(r.shrink2(vec2(6.0, 0.0))).text(pos2(r.min.x + 6.0, r.center().y), Align2::LEFT_CENTER, label, regular(12.0), t.text);
         }
     });
     ui.separator();
     let n = hovered.map_or(0, |h| h + 1);
     if n == 0 {
-        // Cancel is a real row: it closes the popup without undoing anything (#1903).
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::hover());
         let resp = ui.interact(r, undo_list_cancel_id(), Sense::click());
         if resp.hovered() {
@@ -226,7 +224,6 @@ pub(crate) fn qat_menu(ui: &mut Ui, app: &mut WordApp) {
         ui.close();
     }
     ui.separator();
-    // Last, as in Word (#1945); the ribbon's right-click menu brings the toolbar back.
     if ui.button(tl!("Hide Quick Access Toolbar")).clicked() {
         let _ = app.run("ui.quickAccessToolbar", json!({"value": false}));
         ui.close();
@@ -277,8 +274,6 @@ impl MacTitleBar {
 
 pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    // macOS: shorter, so the system's traffic lights are centred in it; the tallest controls
-    // shrink to keep a margin above and below them.
     let mac = app.integrated_titlebar;
     let bar = app.mac_titlebar;
     let left = if mac { bar.content_left as i8 } else { 8 };
@@ -288,7 +283,6 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
         .frame(egui::Frame::NONE.fill(t.title_bar).inner_margin(egui::Margin { left, right: 10, top: 0, bottom: 0 }))
         .show(ui, |ui| {
             let full = ui.max_rect();
-            // Drag the window by the title bar (integrated title bar on macOS).
             let drag = ui.interact(full, ui.id().with("title_drag"), Sense::click_and_drag());
             if drag.drag_started() {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
@@ -301,13 +295,9 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
             let mut right_start = full.max.x;
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
-                // AutoSave switch: greyed out, with the reason as its tooltip, when AutoSave can't
-                // cover the document (#196, #176); clicking it then offers Save As where that helps.
                 let block = app.autosave_block();
                 let on = app.autosaves();
                 let color = if block.is_some() { t.text_dim.gamma_multiply(0.6) } else { t.text_dim };
-                // The text is part of the switch (#3370): clicking it toggles AutoSave, and chrome
-                // text is not document text to select (double-clicking it copied "AutoSave").
                 let text = ui.add(
                     egui::Label::new(egui::RichText::new(tl!("AutoSave")).font(regular(11.5)).color(color)).selectable(false).sense(Sense::click()),
                 );
@@ -330,7 +320,6 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
                         None => {
                             let _ = app.run("file.autosave", json!({}));
                         }
-                        // AutoSave comes on once Save As has saved (maybe on a later frame, #94).
                         Some(b) if b.save_as_helps() => {
                             let _ = app.save_as(crate::file_dialogs::AfterSave::AutoSave);
                         }
@@ -338,13 +327,11 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
                     }
                 }
                 ui.add_space(8.0);
-                // Hidden (#1945): neither the buttons nor the … menu; the title centres as before.
                 if app.ui.quick_access_toolbar {
                     quick_access(ui, app);
                 }
                 qat_end = ui.min_rect().max.x;
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // Account / community.
                     let (r, resp) = ui.allocate_exact_size(vec2(control_h, control_h), Sense::click());
                     ui.painter().circle_filled(r.center(), control_h / 2.0 - 1.0, t.accent);
                     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tl!("Account")));
@@ -354,29 +341,11 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
                         let _ = app.run("ui.backstage", json!({"value": true, "page": "options", "pane": "general"}));
                     }
                     ui.add_space(8.0);
-                    if app.ui.show_discord {
-                        let (r, resp) = ui.allocate_exact_size(vec2(84.0, 22.0), Sense::click());
-                        ui.painter().rect_filled(r, 11.0, if resp.hovered() { t.accent_text } else { t.accent });
-                        icons::paint(
-                            ui.painter(),
-                            Rect::from_center_size(pos2(r.min.x + 13.0, r.center().y), vec2(14.0, 14.0)),
-                            "discord",
-                            t.on_accent,
-                            t.on_accent,
-                        );
-                        ui.painter().text(pos2(r.min.x + 24.0, r.center().y), Align2::LEFT_CENTER, tl!("Discord"), medium(11.5), t.on_accent);
-                        if resp.on_hover_text(tl!("Join the ArtCraft community on Discord")).clicked() {
-                            let _ = app.run("ui.discord", json!({}));
-                        }
-                        ui.add_space(8.0);
-                    }
                     search_box(app, ui, control_h);
                     right_start = ui.min_rect().min.x;
                 });
             });
-            // Centred title.
             let title = if !app.has_document() {
-                // No document open (#1129): the app's name alone.
                 "WordCraft".to_string()
             } else {
                 format!(
@@ -410,7 +379,6 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
                 if response.clicked() {
                     let _ = app.run("file.rename", json!({}));
                 }
-
                 paint_text(
                     ui.painter(),
                     pos2(cx - w / 2.0, full.center().y - TypeRung::Chrome.line_height() / 2.0),
@@ -424,8 +392,6 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
         });
 }
 
-/// Search ("Tell me"): a box that opens command search. In the title bar, and in the Commands bar
-/// of Full Screen (#1678).
 fn search_box(app: &mut WordApp, ui: &mut Ui, control_h: f32) {
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(260.0, control_h), Sense::click());
@@ -456,9 +422,6 @@ fn search_box(app: &mut WordApp, ui: &mut Ui, control_h: f32) {
     }
 }
 
-/// What fills the screen (#1678): the usual window, Focus (the document on black, a slim bar to
-/// drop the ribbon down) or Full Screen (the pages alone, a slim bar with Search). Both of the
-/// latter take the whole screen and hide the title bar, ribbon, status bar, panes and rulers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
     Normal,
@@ -477,7 +440,6 @@ impl Screen {
         }
     }
 
-    /// The command that leaves this screen, if it isn't the usual window.
     pub fn exit_command(self) -> Option<&'static str> {
         match self {
             Screen::Normal => None,
@@ -487,14 +449,10 @@ impl Screen {
     }
 }
 
-/// Focus's background around the page, in both themes (our own value, #1678).
 pub const FOCUS_CANVAS: egui::Color32 = egui::Color32::BLACK;
 
-/// Height of the slim bar Focus and Full Screen View show in place of the chrome (#1678).
 pub const SCREEN_BAR_HEIGHT: f32 = 30.0;
 
-/// The slim bar across the top in Focus ("⋯" drops the ribbon down over the page) and Full
-/// Screen View (Search, which finds and runs any command).
 pub fn screen_bar(app: &mut WordApp, ui: &mut Ui, screen: Screen) {
     let t = Tokens::get(ui.ctx());
     let fill = if screen == Screen::Focus { FOCUS_CANVAS } else { t.title_bar };
@@ -518,8 +476,6 @@ pub fn screen_bar(app: &mut WordApp, ui: &mut Ui, screen: Screen) {
     });
 }
 
-/// Focus: the ribbon dropped down from the bar, drawn over the page so the page doesn't move. A
-/// click on the page puts it away; Focus stays on.
 pub fn focus_ribbon(app: &mut WordApp, ctx: &egui::Context) {
     let width = ctx.content_rect().width();
     egui::Area::new(egui::Id::new("focus_ribbon")).fixed_pos(pos2(0.0, SCREEN_BAR_HEIGHT)).order(egui::Order::Middle).show(ctx, |ui| {
@@ -547,7 +503,6 @@ pub fn status_bar(app: &mut WordApp, ui: &mut Ui) {
                 .stroke(Stroke::new(1.0, t.border)),
         )
         .show(ui, |ui| {
-            // No document open (#1129): an empty status bar.
             if !app.has_document() {
                 return;
             }
@@ -558,7 +513,6 @@ pub fn status_bar(app: &mut WordApp, ui: &mut Ui) {
 
                 let l = app.session.layout();
                 let page = if let Some(p) = app.canvas.viewed_page {
-                    // The page in view (#3880), as the scrollbar's tip names it.
                     p.min(l.pages.len().saturating_sub(1)) + 1
                 } else if app.session.selects_whole_story() {
                     app.session.page_hint.min(l.pages.len().saturating_sub(1)) + 1
@@ -583,7 +537,6 @@ pub fn status_bar(app: &mut WordApp, ui: &mut Ui) {
                 
                 if !is_narrow {
                     let words = app.cached_word_count();
-                    // A selected picture/shape/text box isn't a text selection: show the total.
                     let wtxt = if app.session.sel.is_collapsed() || crate::objects::selected(app).is_some() {
                         crate::i18n::fmt(tl!("{words} words"), &[("words", &words.to_string())])
                     } else {
@@ -629,10 +582,6 @@ pub fn status_bar(app: &mut WordApp, ui: &mut Ui) {
                 if app.session.prefs.overtype && st(ui, tl!("Overtype")).on_hover_text(tl!("Click to switch back to inserting")).clicked() {
                     let _ = app.run("text.overtype", json!({"value": false}));
                 }
-                // The message is drawn where the row is now; the controls on the right are laid
-                // out first, so the message can be shortened to the space they leave (#2402): a
-                // long one (the path of a file that isn't there) must not be drawn over the
-                // Focus and view buttons.
                 let msg_at = ui.cursor().min;
                 let mut controls_left = f32::INFINITY;
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -643,8 +592,6 @@ pub fn status_bar(app: &mut WordApp, ui: &mut Ui) {
                     let zfont = TypeRung::Caption.regular();
                     let ztrack = TypeRung::Caption.tracking();
                     let zw = text_width(ui.painter(), &ztxt, &zfont, ztrack, t.text_dim);
-                    // A fixed width for three digits plus a small reserve, so the controls to the
-                    // left don't shift as the percentage gains or loses digits (#1975).
                     let zslot = text_width(ui.painter(), "000%", &zfont, ztrack, t.text_dim) + 4.0;
                     let (zr, zresp) = ui.allocate_exact_size(vec2(zw.max(zslot) + 1.0, TypeRung::Caption.line_height()), Sense::click());
                     paint_text(ui.painter(), pos2(zr.max.x - 1.0, zr.min.y), Align2::RIGHT_TOP, &ztxt, &zfont, ztrack, t.text_dim);
@@ -658,7 +605,6 @@ pub fn status_bar(app: &mut WordApp, ui: &mut Ui) {
                             let _ = app.run("view.zoomIn", json!({}));
                         }
                     }
-                    // Reading zoom changes only reading presentation, never the normal view zoom.
                     let mut v = if reading { app.session.view.read_zoom } else { app.canvas.scale / crate::canvas::PX_PER_PT };
                     let slider = egui::Slider::new(&mut v, if reading { 0.75..=1.5 } else { 0.1..=5.0 }).logarithmic(!reading).show_value(false);
                     ui.spacing_mut().slider_width = 110.0;
@@ -697,8 +643,6 @@ pub fn status_bar(app: &mut WordApp, ui: &mut Ui) {
                     let focus = tl!("Focus");
                     let focus_w = ui.ctx().fonts_mut(|f| f.layout_no_wrap(focus.to_string(), regular(11.5), t.text_dim).size().x);
                     let (r, resp) = ui.allocate_exact_size(vec2((focus_w + 26.0).max(56.0), 20.0), Sense::click());
-                    // The Focus button is the last of the controls, so it is the leftmost one: the
-                    // message has to stop before it (#2402).
                     controls_left = r.min.x;
                     if resp.hovered() {
                         ui.painter().rect_filled(r, 3.0, t.hover);
@@ -725,14 +669,11 @@ pub fn status_bar(app: &mut WordApp, ui: &mut Ui) {
                 {
                     let font = TypeRung::Caption.regular();
                     let track = TypeRung::Caption.tracking();
-                    // The room the message has: what is left between here and the controls.
                     let room = controls_left - ui.spacing().item_spacing.x - msg_at.x;
                     let msg_shown = fit_text(ui.painter(), msg, &font, track, t.accent_text, room);
                     if !msg_shown.is_empty() {
                         let w = text_width(ui.painter(), &msg_shown, &font, track, t.accent_text);
                         let rect = Rect::from_min_size(msg_at, vec2(w + 1.0, TypeRung::Caption.line_height()));
-                        // The whole message is in the tooltip; the bar only has room for the
-                        // beginning of it (#2402).
                         let _ = ui.interact(rect, status_message_id(), Sense::hover()).on_hover_text(msg.clone());
                         paint_text(ui.painter(), rect.min, Align2::LEFT_TOP, &msg_shown, &font, track, t.accent_text);
                         ui.allocate_space(vec2(w + 1.0, TypeRung::Caption.line_height()));
@@ -755,7 +696,6 @@ fn small_icon(ui: &mut Ui, icon: &str, tip: &str) -> bool {
 impl WordApp {
     /// Word count, recomputed only when the document changes.
     pub fn cached_word_count(&mut self) -> usize {
-        // The count option changes the count without a document change.
         let key = self.session.rev().wrapping_mul(2) | u64::from(self.session.prefs.count_notes);
         if self.word_count.0 != key {
             self.word_count = (key, self.session.word_count());
