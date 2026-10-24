@@ -21,6 +21,8 @@ egui = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "android-native-activity"] }
 winit = { version = "0.30", default-features = false, features = ["android-native-activity"] }
 log = { workspace = true }
+serde_json = { workspace = true }
+jni = "0.21"
 android_logger = "0.14"
 
 [package.metadata.android]
@@ -34,8 +36,6 @@ target_sdk_version = 34
 
 [package.metadata.android.application]
 label = "WordCraft"
-# Not the fullscreen theme: keeps the app below the status bar instead of drawing under it.
-theme = "@android:style/Theme.DeviceDefault.NoActionBar"
 
 # Android 11+: lets the built-in file browser see Documents/Downloads once the user switches on
 # "Allow access to all files" for the app (Settings > Apps > WordCraft > Permissions).
