@@ -6,7 +6,6 @@ use serde_json::json;
 use crate::theme::{Tokens, medium, regular, semibold};
 use crate::{WordApp, icons};
 
-/// The side menu: page id, label and icon (#1714).
 const PAGES: [(&str, &str, &str); 11] = [
     ("home", "Home", "homeFolder"),
     ("new", "New", "blankPage"),
@@ -560,61 +559,79 @@ fn save_as_page(app: &mut WordApp, ui: &mut Ui) {
 fn info_page(app: &mut WordApp, ui: &mut Ui) {
     heading(ui, "Info");
     let info = app.session.run("file.info", &json!({})).unwrap_or_default();
-    ui.columns(2, |cols| {
-        let ui = &mut cols[0];
-        ui.label(egui::RichText::new(tl!("Properties")).font(semibold(15.0)));
-        let mut props = app.session.doc.core.clone();
-        let mut edited = None;
-        let mut focused = None;
-        egui::Grid::new("props").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
-            for (l, v) in [("Title", &mut props.title), ("Subject", &mut props.subject), ("Author", &mut props.creator), ("Keywords", &mut props.keywords), ("Category", &mut props.category)] {
-                let label = ui.label(tl!(l));
-                let r = ui.add(egui::TextEdit::singleline(v).id_salt(("info-prop", l))).labelled_by(label.id);
-                if r.changed() {
-                    edited = Some(l);
-                }
-                if r.has_focus() {
-                    focused = Some(l);
-                }
-                ui.end_row();
-            }
+    
+    let is_portrait = ui.ctx().content_rect().height() > ui.ctx().content_rect().width();
+    
+    if is_portrait {
+        ui.vertical(|ui| {
+            draw_info_properties(app, ui);
+            ui.add_space(24.0);
+            draw_info_statistics(ui, &info);
         });
-        if let Some(field) = edited {
-            if app.info_editing == Some((field, app.session.rev())) {
-                app.session.join_next_undo();
-            }
-            let ok = app.run("file.properties", json!({"title": props.title, "subject": props.subject, "author": props.creator, "keywords": props.keywords, "category": props.category})).is_ok();
-            app.info_editing = ok.then(|| (field, app.session.rev()));
-        }
-        if focused != app.info_editing.map(|(f, _)| f) {
-            app.info_editing = None;
-        }
-        ui.add_space(18.0);
-        ui.label(egui::RichText::new(tl!("Protect Document")).font(semibold(15.0)));
-        let encrypted = info.get("encrypted").and_then(|v| v.as_bool()).unwrap_or(false);
-        ui.label(if encrypted {
-            tl!("A password is required to open this document.")
-        } else {
-            tl!("Anyone can open this document. Encrypt it with a password to keep it private.")
+    } else {
+        ui.columns(2, |cols| {
+            let ui = &mut cols[0];
+            draw_info_properties(app, ui);
+            let ui = &mut cols[1];
+            draw_info_statistics(ui, &info);
         });
-        ui.horizontal(|ui| {
-            let label = if encrypted { tl!("Change Password…") } else { tl!("Encrypt with Password…") };
-            if ui.button(egui::RichText::new(label).font(medium(13.5))).clicked() {
-                let _ = app.run("file.encrypt", json!({}));
+    }
+}
+
+fn draw_info_properties(app: &mut WordApp, ui: &mut Ui) {
+    ui.label(egui::RichText::new(tl!("Properties")).font(semibold(15.0)));
+    let mut props = app.session.doc.core.clone();
+    let mut edited = None;
+    let mut focused = None;
+    egui::Grid::new("props").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
+        for (l, v) in [("Title", &mut props.title), ("Subject", &mut props.subject), ("Author", &mut props.creator), ("Keywords", &mut props.keywords), ("Category", &mut props.category)] {
+            let label = ui.label(tl!(l));
+            let r = ui.add(egui::TextEdit::singleline(v).id_salt(("info-prop", l))).labelled_by(label.id);
+            if r.changed() {
+                edited = Some(l);
             }
-            if encrypted && ui.button(egui::RichText::new(tl!("Remove Password")).font(medium(13.5))).clicked() {
-                let _ = app.run("file.encrypt", json!({"password": null}));
+            if r.has_focus() {
+                focused = Some(l);
             }
-        });
-        let ui = &mut cols[1];
-        ui.label(egui::RichText::new(tl!("Statistics")).font(semibold(15.0)));
-        for (l, k) in [("Pages", "pages"), ("Words", "words"), ("Paragraphs", "paragraphs"), ("Sections", "sections"), ("Comments", "comments")] {
-            ui.label(format!("{}: {}", tl!(l), info.get(k).map(|v| v.to_string()).unwrap_or_default()));
+            ui.end_row();
         }
-        let path = info.get("path").and_then(|v| v.as_str()).unwrap_or(tl!("Not saved yet"));
-        
-        ui.add(egui::Label::new(crate::i18n::fmt(tl!("Location: {path}"), &[("path", path)])).wrap());
     });
+    if let Some(field) = edited {
+        if app.info_editing == Some((field, app.session.rev())) {
+            app.session.join_next_undo();
+        }
+        let ok = app.run("file.properties", json!({"title": props.title, "subject": props.subject, "author": props.creator, "keywords": props.keywords, "category": props.category})).is_ok();
+        app.info_editing = ok.then(|| (field, app.session.rev()));
+    }
+    if focused != app.info_editing.map(|(f, _)| f) {
+        app.info_editing = None;
+    }
+    ui.add_space(18.0);
+    ui.label(egui::RichText::new(tl!("Protect Document")).font(semibold(15.0)));
+    let encrypted = app.session.run("file.info", &json!({})).unwrap_or_default().get("encrypted").and_then(|v| v.as_bool()).unwrap_or(false);
+    ui.label(if encrypted {
+        tl!("A password is required to open this document.")
+    } else {
+        tl!("Anyone can open this document. Encrypt it with a password to keep it private.")
+    });
+    ui.horizontal(|ui| {
+        let label = if encrypted { tl!("Change Password…") } else { tl!("Encrypt with Password…") };
+        if ui.button(egui::RichText::new(label).font(medium(13.5))).clicked() {
+            let _ = app.run("file.encrypt", json!({}));
+        }
+        if encrypted && ui.button(egui::RichText::new(tl!("Remove Password")).font(medium(13.5))).clicked() {
+            let _ = app.run("file.encrypt", json!({"password": null}));
+        }
+    });
+}
+
+fn draw_info_statistics(ui: &mut Ui, info: &serde_json::Value) {
+    ui.label(egui::RichText::new(tl!("Statistics")).font(semibold(15.0)));
+    for (l, k) in [("Pages", "pages"), ("Words", "words"), ("Paragraphs", "paragraphs"), ("Sections", "sections"), ("Comments", "comments")] {
+        ui.label(format!("{}: {}", tl!(l), info.get(k).map(|v| v.to_string()).unwrap_or_default()));
+    }
+    let path = info.get("path").and_then(|v| v.as_str()).unwrap_or(tl!("Not saved yet"));
+    ui.add(egui::Label::new(crate::i18n::fmt(tl!("Location: {path}"), &[("path", path)])).wrap());
 }
 
 fn export_page(app: &mut WordApp, ui: &mut Ui) {
@@ -637,5 +654,10 @@ fn export_page(app: &mut WordApp, ui: &mut Ui) {
     heading(ui, "Export");
     ui.label(tl!("Save a copy in another format. Printing goes through a PDF you can print from any viewer."));
     ui.add_space(12.0);
+    
+    let is_portrait = ui.ctx().content_rect().height() > ui.ctx().content_rect().width();
+    if is_portrait {
+        ui.set_max_width(ui.available_width().min(400.0));
+    }
     crate::print_page::export_formats(app, ui);
 }
