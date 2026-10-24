@@ -58,12 +58,14 @@ jobs:
         run: |
           APK=$(find target -name "*.apk" | head -n 1)
           echo "Found: $APK"
-          cp "$APK" WordCraft-android-arm64.apk
+          # PERUBAHAN: Menyesuaikan nama file dengan nomor build (run_number)
+          cp "$APK" "WordCraft-build-${{ github.run_number }}.apk"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: WordCraft-android-arm64
-          path: WordCraft-android-arm64.apk
+          # PERUBAHAN: Nama artifact juga pakai nomor build
+          name: WordCraft-build-${{ github.run_number }}
+          path: WordCraft-build-${{ github.run_number }}.apk
 
       - name: Publish as a release (easy download link)
         uses: softprops/action-gh-release@v2
@@ -71,4 +73,5 @@ jobs:
           tag_name: android-build-${{ github.run_number }}
           name: WordCraft Android build ${{ github.run_number }}
           prerelease: true
-          files: WordCraft-android-arm64.apk
+          # PERUBAHAN: File yang di-release pakai nomor build
+          files: WordCraft-build-${{ github.run_number }}.apk
