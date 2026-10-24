@@ -201,6 +201,8 @@ impl AndroidShell {
                         let dist = start.distance(*pos);
                         if on_page && dist < TAP_SLOP_POINTS {
                             self.keyboard_wanted = true;
+                            // The keyboard may have been dismissed from Android's side: ask again.
+                            self.keyboard_shown = false;
                         } else {
                             self.keyboard_wanted = false;
                         }
@@ -314,13 +316,23 @@ impl eframe::App for AndroidShell {
         }
         ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| self.app.ui(ui));
 
-        // Logika simpel yang PASTI lolos compile:
-        // Kalau di menu/dialog, serahkan egui. Kalau di halaman, ikuti track_taps.
-        let wants_keyboard = if self.app.ui.backstage || self.app.dialog.is_some() {
-            ui.ctx().egui_wants_keyboard_input()
-        } else {
-            self.keyboard_wanted
+        // Keyboard: only for the white page (after a tap on it) and for text boxes.
+        // The page and every text box report where their caret is (IME output) while they take
+        // typing; that report is also what makes Android bring the keyboard up on its own, so it is
+        // withheld whenever no keyboard is wanted.
+        let caret = ui.ctx().output(|o| o.ime.as_ref().map(|ime| ime.cursor_rect));
+        let wants_keyboard = match caret {
+            None => false,
+            Some(caret) => match self.app.canvas.canvas_rect {
+                // A caret on the page: only after a tap on the page itself.
+                Some(page) if !self.app.ui.backstage && page.contains(caret.center()) => self.keyboard_wanted,
+                // A text box anywhere else (search box, dialog field, File pages): when it is edited.
+                _ => true,
+            },
         };
+        if !wants_keyboard {
+            ui.ctx().output_mut(|o| o.ime = None);
+        }
 
         if wants_keyboard != self.keyboard_shown {
             self.keyboard_shown = wants_keyboard;
