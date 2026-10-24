@@ -1,0 +1,74 @@
+name: Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "apps/wordcraft-android/**"
+      - ".github/workflows/android.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK platform and build tools
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Install cargo-apk
+        run: cargo install cargo-apk --locked
+
+      - name: Create a signing key
+        run: |
+          keytool -genkeypair -v \
+            -keystore "$RUNNER_TEMP/wordcraft.keystore" \
+            -alias wordcraft -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=WordCraft"
+
+      - name: Build the APK
+        working-directory: apps/wordcraft-android
+        env:
+          CARGO_APK_RELEASE_KEYSTORE: ${{ runner.temp }}/wordcraft.keystore
+          CARGO_APK_RELEASE_KEYSTORE_PASSWORD: android
+        run: |
+          export ANDROID_NDK_ROOT="$ANDROID_NDK_LATEST_HOME"
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          cargo apk build --release
+
+      - name: Collect the APK
+        run: |
+          APK=$(find target -name "*.apk" | head -n 1)
+          echo "Found: $APK"
+          cp "$APK" WordCraft-android-arm64.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WordCraft-android-arm64
+          path: WordCraft-android-arm64.apk
+
+      - name: Publish as a release (easy download link)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-build-${{ github.run_number }}
+          name: WordCraft Android build ${{ github.run_number }}
+          prerelease: true
+          files: WordCraft-android-arm64.apk
