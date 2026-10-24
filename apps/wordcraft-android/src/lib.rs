@@ -25,7 +25,7 @@ use wordcraft_ui_egui::{FileDialogAnswer, FileDialogRequest, Services, WordApp};
 /// Two Back presses within this time quit the app.
 const BACK_EXIT_WINDOW: Duration = Duration::from_millis(1800);
 /// In portrait the interface is drawn at this share of the display's own scale.
-const PORTRAIT_SCALE: f64 = 0.75;
+const PORTRAIT_SCALE: f64 = 0.55;
 
 /// Where the built-in file browser starts, and what `~` means.
 fn start_dir(app: &AndroidApp) -> Option<PathBuf> {
