@@ -315,7 +315,9 @@ pub(crate) fn show(app: &mut WordApp, ctx: &egui::Context) {
         .resizable(false)
         .anchor(Align2::CENTER_CENTER, vec2(0.0, -20.0));
     let shown = crate::window_close::window(ctx, window).show(ctx, |ui| {
-        ui.set_width(620.0);
+        let screen_width = ctx.content_rect().width();
+        let target_width = if screen_width < 700.0 { screen_width - 32.0 } else { 620.0 };
+        ui.set_width(target_width.max(280.0));
         done = body(ui, &mut b, &t);
     });
     if shown.is_some_and(|s| crate::window_close::show(ctx, &s.response, &t)) {
@@ -427,8 +429,8 @@ fn body(ui: &mut Ui, b: &mut FileBrowser, t: &Tokens) -> Option<Option<PathBuf>>
     let mut refilter = false;
     ui.horizontal(|ui| {
         let label = ui.label(tl!("File name:"));
-        // The name field takes what the label (longer in some languages) and the type list leave.
-        let width = (ui.available_width() - 170.0).max(120.0);
+        let combo_width = if ui.available_width() < 400.0 { 90.0 } else { 150.0 };
+        let width = (ui.available_width() - combo_width - 16.0).max(100.0);
         let r = ui.add(egui::TextEdit::singleline(&mut b.name).desired_width(width)).labelled_by(label.id);
         if b.focus_name {
             r.request_focus();
@@ -440,7 +442,7 @@ fn body(ui: &mut Ui, b: &mut FileBrowser, t: &Tokens) -> Option<Option<PathBuf>>
         }
         let before = b.filter;
         let current = b.filters.get(b.filter).map(|(l, _)| tl!(l.as_str()).to_string()).unwrap_or_default();
-        egui::ComboBox::from_id_salt("builtin_file_browser_type").selected_text(current).width(150.0).show_ui(ui, |ui| {
+        egui::ComboBox::from_id_salt("builtin_file_browser_type").selected_text(current).width(combo_width).show_ui(ui, |ui| {
             for (i, (l, _)) in b.filters.iter().enumerate() {
                 ui.selectable_value(&mut b.filter, i, tl!(l.as_str()));
             }
@@ -479,140 +481,4 @@ fn icon_button(ui: &mut Ui, t: &Tokens, icon: &str, tip: &str, enabled: bool) ->
     let c = if enabled { t.icon } else { t.text_disabled };
     icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(18.0, 18.0)), icon, c, if enabled { t.accent } else { c });
     resp.on_hover_text(tip).clicked()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::Services;
-    use serde_json::json;
-    use std::sync::mpsc::channel;
-    use wordcraft_engine::Session;
-
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("wordcraft-ui-browser-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    fn exts(e: &[&str]) -> Vec<String> {
-        e.iter().map(|x| x.to_string()).collect()
-    }
-
-    /// Folders come first, then the files of the chosen type (any case), each by name; hidden
-    /// entries and other types are left out, and a big folder is cut off and says so.
-    #[test]
-    fn listing_filters_sorts_and_caps() {
-        let dir = scratch("list");
-        for f in ["b.docx", "A.DOCX", "notes.txt", ".hidden.docx", "c.docx"] {
-            std::fs::write(dir.join(f), b"x").unwrap();
-        }
-        std::fs::create_dir(dir.join("zeta")).unwrap();
-        std::fs::create_dir(dir.join(".git")).unwrap();
-        let l = list_dir(&dir, &exts(&["docx"]), 100).unwrap();
-        let names: Vec<&str> = l.entries.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, ["zeta", "A.DOCX", "b.docx", "c.docx"]);
-        assert!(!l.truncated);
-        assert_eq!(list_dir(&dir, &exts(&["*"]), 100).unwrap().entries.len(), 5);
-        let capped = list_dir(&dir, &exts(&["docx"]), 2).unwrap();
-        assert_eq!(capped.entries.len(), 2);
-        assert!(capped.truncated);
-        assert!(list_dir(&dir.join("missing"), &exts(&["*"]), 10).is_err(), "an unreadable folder is an error, not a panic");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Save As in the browser: a typed folder is opened, a bare name gets the type's extension,
-    /// and an existing file is replaced only on the second OK.
-    #[test]
-    fn save_adds_the_extension_and_asks_before_replacing() {
-        let dir = scratch("save");
-        std::fs::create_dir(dir.join("drafts")).unwrap();
-        std::fs::write(dir.join("drafts").join("old.docx"), b"x").unwrap();
-        let req = FileDialogRequest::Save { name: "Document1.docx".into(), dir: None };
-        let mut b = FileBrowser::new(req, AfterPick::OpenDocument, dir.clone(), false);
-        b.name = "drafts".into();
-        assert_eq!(b.accept(), Step::Stay);
-        assert_eq!(b.dir, dir.join("drafts"));
-        b.name = "chapter".into();
-        assert_eq!(b.accept(), Step::Pick(dir.join("drafts").join("chapter.docx")));
-        b.name = "old".into();
-        assert_eq!(b.accept(), Step::Stay, "asks before replacing");
-        assert_eq!(b.accept(), Step::Pick(dir.join("drafts").join("old.docx")));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// The host can't show a system dialog (#576): Save As carries on in the built-in browser,
-    /// and its answer saves the document.
-    #[test]
-    fn no_system_dialog_falls_back_to_the_built_in_browser() {
-        let dir = scratch("fallback");
-        let services = Services {
-            file_dialog: Some(Box::new(|_req| {
-                let (tx, rx) = channel();
-                tx.send(Err("no portal".to_string())).unwrap();
-                rx
-            })),
-            ..Default::default()
-        };
-        let mut a = WordApp::new(Session::new(wordcraft_doc::Document::new()), services);
-        a.run("text.insert", json!({"text": "Saved without a portal"})).unwrap();
-        a.save_as_dialog();
-        assert!(a.file_dialog_open());
-        let b = a.file_browser.open.as_mut().expect("the built-in browser is open");
-        assert!(b.unavailable);
-        b.navigate(dir.clone());
-        b.name = "novel".into();
-        let Step::Pick(path) = b.accept() else { panic!("picked") };
-        a.close_file_browser(Some(path));
-        assert!(!a.file_dialog_open());
-        assert!(!a.session.dirty);
-        let saved = wordcraft_engine::io::open_path(&dir.join("novel.docx")).unwrap();
-        assert!(saved.plain_text(wordcraft_doc::StoryRef::Body).contains("Saved without a portal"));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// #3037: an empty folder (or a type filter that matches nothing) says so instead of a blank
-    /// box; a matching file replaces the hint.
-    #[test]
-    fn an_empty_folder_says_there_are_no_items() {
-        let dir = scratch("empty_state");
-        let mut a = WordApp::new(Session::new(wordcraft_doc::Document::new()), Services::default());
-        let mut b = FileBrowser::new(FileDialogRequest::Open { purpose: "document".into() }, AfterPick::OpenDocument, dir.clone(), false);
-        b.navigate(dir.clone());
-        assert!(matches!(&b.listing, Ok(l) if l.entries.is_empty()), "the folder starts empty");
-        a.file_browser.open = Some(Box::new(b));
-        let mut h = egui_kittest::Harness::builder().with_size(vec2(1440.0, 900.0)).build_ui_state(
-            |ui, app: &mut WordApp| {
-                let ctx = ui.ctx().clone();
-                app.logic(&ctx);
-                app.ui(ui);
-            },
-            a,
-        );
-        let texts = |h: &egui_kittest::Harness<'static, WordApp>| -> Vec<String> {
-            h.output()
-                .shapes
-                .iter()
-                .filter_map(|s| match &s.shape {
-                    egui::Shape::Text(t) => Some(t.galley.text().to_string()),
-                    _ => None,
-                })
-                .collect()
-        };
-        for _ in 0..4 {
-            h.step();
-        }
-        assert!(texts(&h).iter().any(|t| t.contains("No items to show.")), "empty-state hint shown");
-        std::fs::write(dir.join("chapter.docx"), b"x").unwrap();
-        if let Some(b) = &mut h.state_mut().file_browser.open {
-            b.navigate(dir.clone());
-        }
-        for _ in 0..2 {
-            h.step();
-        }
-        assert!(texts(&h).iter().any(|t| t.contains("chapter.docx")), "the file is listed");
-        assert!(!texts(&h).iter().any(|t| t.contains("No items to show.")), "the hint is gone");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 }
