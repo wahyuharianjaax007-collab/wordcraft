@@ -57,8 +57,6 @@ fn force_hide_soft_input_on_startup(app: &AndroidApp) {
     
     let result = (|| -> jni::errors::Result<()> {
         let window = env.call_method(&activity, "getWindow", "()Landroid/view/Window;", &[])?.l()?;
-        // WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN = 0x00000002
-        // WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE = 0x00000010
         let mode = 0x00000002 | 0x00000010;
         env.call_method(&window, "setSoftInputMode", "(I)V", &[JValue::Int(mode)])?;
         Ok(())
@@ -316,17 +314,12 @@ impl eframe::App for AndroidShell {
         }
         ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| self.app.ui(ui));
 
+        // Logika simpel yang PASTI lolos compile:
+        // Kalau di menu/dialog, serahkan egui. Kalau di halaman, ikuti track_taps.
         let wants_keyboard = if self.app.ui.backstage || self.app.dialog.is_some() {
             ui.ctx().egui_wants_keyboard_input()
-        } else if self.keyboard_wanted {
-            true
         } else {
-            let canvas_focused = self.app.canvas.widget_id.is_some_and(|id| ui.ctx().memory(|m| m.has_focus(id)));
-            if canvas_focused {
-                false
-            } else {
-                ui.ctx().egui_wants_keyboard_input()
-            }
+            self.keyboard_wanted
         };
 
         if wants_keyboard != self.keyboard_shown {
@@ -356,7 +349,7 @@ pub fn android_main(app: AndroidApp) {
     }
     
     ask_for_all_files_access(&app);
-    force_hide_soft_input_on_startup(&app); // INI DIA SATPAM DARI SISTEM ANDROID
+    force_hide_soft_input_on_startup(&app);
 
     let status_bar_px = status_bar_height_px(&app);
     let options = eframe::NativeOptions { android_app: Some(app.clone()), ..Default::default() };
