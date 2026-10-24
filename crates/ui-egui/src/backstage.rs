@@ -305,12 +305,17 @@ fn home_page(app: &mut WordApp, ui: &mut Ui) {
             "Good evening"
         },
     );
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing = vec2(18.0, 0.0);
-        for (label, template) in TEMPLATES.into_iter().take(HOME_TEMPLATES) {
-            template_tile(ui, app, label, template);
-        }
+    
+    // PERBAIKAN POIN 4: Bungkus dengan ScrollArea::horizontal agar bisa digeser
+    egui::ScrollArea::horizontal().show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = vec2(18.0, 0.0);
+            for (label, template) in TEMPLATES.into_iter().take(HOME_TEMPLATES) {
+                template_tile(ui, app, label, template);
+            }
+        });
     });
+    
     ui.add_space(8.0);
     let more = ui.add(egui::Label::new(egui::RichText::new(tl!("More templates →")).font(medium(13.5)).color(t.accent)).sense(Sense::click()));
     if more.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
@@ -340,13 +345,17 @@ fn new_page(app: &mut WordApp, ui: &mut Ui) {
         return;
     }
     if !found.is_empty() {
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = vec2(18.0, 18.0);
-            for (label, template) in found {
-                template_tile(ui, app, label, template);
-            }
+        // PERBAIKAN POIN 4: Bungkus dengan ScrollArea::horizontal agar bisa digeser
+        egui::ScrollArea::horizontal().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = vec2(18.0, 18.0);
+                for (label, template) in found {
+                    template_tile(ui, app, label, template);
+                }
+            });
         });
     }
+    
     // Personal: the user templates folder's templates; a folder per category, as in Word.
     let Some(folder) = folder else { return };
     if !query.trim().is_empty() && personal_found.is_empty() {
@@ -673,7 +682,9 @@ fn info_page(app: &mut WordApp, ui: &mut Ui) {
             ui.label(format!("{}: {}", tl!(l), info.get(k).map(|v| v.to_string()).unwrap_or_default()));
         }
         let path = info.get("path").and_then(|v| v.as_str()).unwrap_or(tl!("Not saved yet"));
-        ui.label(crate::i18n::fmt(tl!("Location: {path}"), &[("path", path)]));
+        
+        // PERBAIKAN POIN 5: Teks path yang panjang dibuat .wrap() agar turun ke bawah (tidak berantakan)
+        ui.add(egui::Label::new(crate::i18n::fmt(tl!("Location: {path}"), &[("path", path)])).wrap());
     });
 }
 
@@ -822,8 +833,6 @@ mod tests {
         (app, root)
     }
 
-    /// Hold discovery polling until the accessible control has dispatched its command.
-    /// Warming up first keeps font installation independent of worker timing.
     #[cfg(not(target_arch = "wasm32"))]
     fn pending_recovery_harness(
         app: WordApp,
@@ -870,13 +879,9 @@ mod tests {
             assert!(std::time::Instant::now() < end);
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        // Worker completion is a state boundary; egui needs subsequent frames to finish
-        // font installation/layout and expose the resulting buttons to AccessKit.
         h.run_steps(4);
     }
 
-    /// #3243: the Recover page uses the app theme like every other Backstage page: no black
-    /// fill, and its labels are not forced white (unreadable on the light theme).
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn recovery_page_follows_the_theme() {
@@ -1089,9 +1094,6 @@ mod tests {
         h
     }
 
-    /// File › New lists the user templates folder's templates under Personal (#2852), by
-    /// category; the search covers them; a click makes an untitled document attached to the
-    /// template.
     #[test]
     fn new_lists_personal_templates_and_opens_one() {
         let dir = personal_dir("gallery");
@@ -1105,7 +1107,6 @@ mod tests {
         assert!(h.query_by_label("Legal").is_some(), "a subfolder is a category");
         assert!(h.query_by_label("Report").is_some(), "the built-in templates stay");
 
-        // The search covers both.
         h.ctx.data_mut(|d| d.insert_temp(egui::Id::new("backstage_template_search"), "memo".to_string()));
         h.run_steps(3);
         assert!(h.query_by_label("Team memo").is_some(), "search finds a personal template");
@@ -1127,8 +1128,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// An empty (or not yet made) templates folder says where templates come from; no folder (the
-    /// web) shows no Personal section. Home keeps only the built-ins.
     #[test]
     fn personal_section_empty_state_and_no_folder() {
         let dir = personal_dir("empty").join("Templates");
@@ -1140,7 +1139,6 @@ mod tests {
         assert!(h.query_by_label("Personal").is_none());
     }
 
-    /// A folder chosen in File › Options › Advanced › File locations replaces the app's own.
     #[test]
     fn the_options_folder_replaces_the_default() {
         let own = personal_dir("own");
@@ -1158,8 +1156,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&chosen);
     }
 
-    /// A personal template replaces the document like New does: unsaved changes are asked about
-    /// first, and nothing is replaced until that is answered.
     #[test]
     fn a_personal_template_asks_about_unsaved_changes_first() {
         let dir = personal_dir("dirty");
@@ -1189,7 +1185,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The templates folder is read when New is shown and on Refresh, not on every frame.
     #[test]
     fn personal_templates_are_listed_once_per_visit_and_on_refresh() {
         let dir = personal_dir("refresh");
@@ -1207,7 +1202,6 @@ mod tests {
         h.run_steps(3);
         assert_eq!(count(), after_open + 1, "Refresh lists once");
         assert!(h.query_by_label("Second").is_some(), "Refresh shows the new template");
-        // Leaving New and coming back reads the folder again.
         h.state_mut().run("ui.backstage", json!({"value": true, "page": "open"})).unwrap();
         h.run_steps(2);
         write_template(&dir.join("Third.dotx"), "z");
@@ -1219,7 +1213,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A saved templates folder that is a network path, or gone, gives way to the app's own.
     #[test]
     fn an_unusable_saved_folder_falls_back_to_the_apps_own() {
         let own = personal_dir("fallback");
@@ -1234,8 +1227,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&own);
     }
 
-    /// Home and New are different pages (#141): Home has the short template row, the link to New
-    /// and Recent; New has every template and no Recent list.
     #[test]
     fn home_and_new_show_different_sections() {
         let mut a = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::new()), Services::default());
@@ -1259,8 +1250,6 @@ mod tests {
         assert!(h.query_by_label("Recent").is_none(), "New has no Recent list");
     }
 
-    /// #3176: a screen reader finds each template and each recent document as a button named by
-    /// its caption or file name (they were unnamed text), and pressing one opens it.
     #[test]
     fn templates_and_recent_documents_are_named_buttons() {
         use egui::accesskit::Role;
@@ -1285,11 +1274,6 @@ mod tests {
         assert!(!h.state().session.doc.plain_text(wordcraft_doc::StoryRef::Body).is_empty(), "with the template's text");
     }
 
-    /// Clicking the back arrow closes the File page and gives the keyboard back to the page,
-    /// without naming as focused a widget the frame didn't draw: with accessibility on (a screen
-    /// reader, or any UI Automation client on Windows) AccessKit ends the program over that, and
-    /// 0.8.0 vanished after Blank document, File, then the back arrow. The test harness always runs
-    /// AccessKit.
     #[test]
     fn back_arrow_returns_to_the_page_with_accessibility_on() {
         let a = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::new()), Services::default());
@@ -1305,7 +1289,6 @@ mod tests {
         assert!(h.state().canvas.widget_id.is_some(), "the page has been drawn");
         h.state_mut().run("ui.backstage", json!({"value": true})).unwrap();
         h.run_steps(4);
-        // The arrow heads the File page's side bar; it has no label to find it by.
         let arrow = egui::pos2(26.0, 32.0);
         h.event(egui::Event::PointerMoved(arrow));
         for pressed in [true, false] {
@@ -1316,21 +1299,16 @@ mod tests {
         assert!(h.state().canvas.focused, "and the page has the keyboard");
     }
 
-    /// #3041: clicking the plain sidebar background next to the back arrow must not also close
-    /// the File page — only the chevron itself does, same scoping as the macOS chevron (#2972).
     #[test]
     fn clicking_beside_the_back_arrow_does_not_close_the_file_page() {
         let a = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::new()), Services::default());
         let mut h = a11y_harness(a);
         h.state_mut().run("ui.backstage", json!({"value": true})).unwrap();
         h.run_steps(4);
-        // Well clear of the chevron (centred at x=26) but still inside the old 200px-wide row.
         click_at(&mut h, egui::pos2(100.0, 32.0));
         assert!(h.state().ui.backstage, "clicking beside the arrow leaves the File page open");
     }
 
-    /// A harness over the whole app; kittest always runs AccessKit, so a frame that names as
-    /// focused a widget it didn't draw panics with "Focused ID … is not in the node list".
     fn a11y_harness(a: WordApp) -> egui_kittest::Harness<'static, WordApp> {
         let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(
             |ui, app: &mut WordApp| {
@@ -1344,7 +1322,6 @@ mod tests {
         h
     }
 
-    /// A primary click at `pos` (for chrome with no label to find it by).
     fn click_at(h: &mut egui_kittest::Harness<'static, WordApp>, pos: egui::Pos2) {
         h.event(egui::Event::PointerMoved(pos));
         for pressed in [true, false] {
@@ -1353,15 +1330,10 @@ mod tests {
         h.run_steps(4);
     }
 
-    /// The macOS back chevron beside the traffic lights, in a window.
     fn mac_chevron(a: &WordApp) -> egui::Pos2 {
         super::back_chevron_c(0.0, a.mac_titlebar.height / 2.0, false, a.mac_titlebar.content_left)
     }
 
-    /// #2972: on macOS the File page's back button is the chevron beside the traffic lights (the
-    /// "sidebar collapse toggle" of the report; there is no other toggle there). Blank document,
-    /// File, then the chevron ended 0.8.0 with AccessKit's "Focused ID … is not in the node
-    /// list". The same spot clicked in the editor (the title bar) must not either.
     #[test]
     fn mac_back_chevron_returns_to_the_page_with_accessibility_on() {
         let mut a = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::new()), Services::default());
@@ -1377,14 +1349,11 @@ mod tests {
             click_at(&mut h, chevron);
             assert!(!h.state().ui.backstage, "the chevron closes the File page");
             assert!(h.state().canvas.focused, "and the page has the keyboard");
-            // The same spot in the editor's title bar.
             click_at(&mut h, chevron);
             assert!(!h.state().ui.backstage);
         }
     }
 
-    /// #2931: File › New › Blank document with a document open returns to the editor without
-    /// AccessKit losing the focused node; and so does Home's Blank document tile and Escape.
     #[test]
     fn blank_document_from_the_file_page_with_accessibility_on() {
         let work = |mac: bool| {
@@ -1394,7 +1363,6 @@ mod tests {
         };
         for mac in [false, true] {
             for page in ["new", "home"] {
-                // A fresh "Work" document each time, so each path must really make a blank one.
                 let mut h = work(mac);
                 h.state_mut().run("ui.backstage", json!({"value": true, "page": page})).unwrap();
                 h.run_steps(4);
@@ -1414,8 +1382,6 @@ mod tests {
         }
     }
 
-    /// #2908: File › Options, then the back arrow (Windows/Linux layout and the macOS chevron),
-    /// with a document open and from the Start screen, without AccessKit ending the program.
     #[test]
     fn options_back_arrow_with_accessibility_on() {
         for (mac, start) in [(false, false), (true, false), (false, true), (true, true)] {
@@ -1434,7 +1400,6 @@ mod tests {
             h.get_by_role_and_label(egui::accesskit::Role::Button, "Options").click();
             h.run_steps(4);
             assert_eq!(h.state().ui.backstage_page, "options", "mac {mac} start {start}");
-            // Into a pane, so the Options page has a focused widget of its own.
             h.get_by_label("Display").click();
             h.run_steps(4);
             click_at(&mut h, back);
@@ -1447,10 +1412,6 @@ mod tests {
         }
     }
 
-    /// #260: File › Info's Title and Author fields dropped every keystroke (they edited a copy
-    /// re-read each frame and only wrote it back when the field lost focus), so a save had no
-    /// title or author. Typing now lands in the document as it happens, one undo step per field,
-    /// and the browser's Save downloads it with the save stamps advanced (#262).
     #[test]
     fn info_fields_keep_typed_properties_through_a_web_save() {
         use egui::accesskit::Role;
@@ -1488,7 +1449,6 @@ mod tests {
         assert_eq!((core.title.as_str(), core.creator.as_str()), ("ALPHA", "BETA"));
         assert!(h.state().session.dirty, "the property edits are unsaved changes");
 
-        // Save (web: a download) writes them into docProps/core.xml, with fresh save stamps.
         let a = h.state_mut();
         let created = a.session.doc.core.created.clone();
         a.run("file.save", json!({})).unwrap();
@@ -1502,7 +1462,6 @@ mod tests {
         assert!(!back.core.modified.is_empty());
         assert!(!a.session.dirty);
 
-        // Each field's typing is one undo step.
         a.session.run("edit.undo", &json!({})).unwrap();
         assert_eq!((a.session.doc.core.title.as_str(), a.session.doc.core.creator.as_str()), ("ALPHA", ""));
         a.session.run("edit.undo", &json!({})).unwrap();
@@ -1545,7 +1504,6 @@ mod tests {
         assert!(h.state().ui.backstage, "backstage remains open");
     }
 
-    /// Save on a document without a file shows the Save As page only: no native dialog as well.
     #[test]
     fn backstage_save_when_unnamed_opens_no_file_dialog() {
         let shown = std::rc::Rc::new(std::cell::Cell::new(0));
@@ -1575,9 +1533,6 @@ mod tests {
         assert!(!h.state().file_dialog_open());
     }
 
-    /// Repro: a brand-new document, typed text, File > Save (unnamed) > Save As page > Browse…,
-    /// answered asynchronously by a native dialog (as the desktop host does), should land back on
-    /// the document, not the "no document" screen.
     #[test]
     fn backstage_save_browse_native_dialog_lands_on_the_document() {
         use std::sync::mpsc::channel;
@@ -1624,9 +1579,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The Save As page's own render loop skips the status bar while Backstage is open, so a
-    /// write failure (no permission, disk full, a bad path) needs its own place to say why, or
-    /// the page just sits there with a Browse… button and no clue.
     #[test]
     fn backstage_save_browse_write_failure_shows_on_the_save_as_page() {
         use std::sync::mpsc::channel;
@@ -1643,7 +1595,6 @@ mod tests {
         };
         let dir = std::env::temp_dir().join(format!("wordcraft-backstage-save-error-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        // `dir` is deliberately never created, so the write fails: its parent doesn't exist.
         let bogus = dir.join("missing").join("out.docx");
 
         let mut a = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::new()), services);
@@ -1668,8 +1619,6 @@ mod tests {
         assert!(h.state().ui.backstage && h.state().ui.backstage_page == "saveAs", "nothing was actually saved");
         let msg = h.state().status_msg.as_ref().map(|(m, _)| m.clone()).expect("the failure set a status message");
         assert!(!msg.is_empty());
-        // The same text is rendered on the Save As page itself, not just the (invisible, while
-        // Backstage is open) status bar.
         h.get_by_label(msg.as_str());
     }
 
@@ -1700,8 +1649,6 @@ mod tests {
         assert!(!h.state().ui.backstage, "successful save closes backstage");
     }
 
-    /// #1124: the side menu had no Close. It sits after Export and closes the document, asking
-    /// first when there are unsaved changes; Cancel leaves the Backstage as it was.
     #[test]
     fn backstage_close_asks_then_closes() {
         let mut a = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::new()), Services::default());
@@ -1734,7 +1681,6 @@ mod tests {
         assert!(!h.state().has_document() && !h.state().quit_requested, "Don't Save closes the document, not the window (#1712)");
     }
 
-    /// A document without unsaved changes closes without a prompt.
     #[test]
     fn backstage_close_on_a_clean_document_closes_at_once() {
         let mut a = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::new()), Services::default());
