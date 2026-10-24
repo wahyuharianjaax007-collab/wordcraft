@@ -13,7 +13,7 @@
 //!   press within a moment quits (asking about unsaved changes first).
 //! - The interface is never drawn larger than what fits a dialog or the File pages on the screen,
 //!   and a new or opened document is shown at "Page Width" zoom.
-//! - The app is drawn below the status bar (its height is read from Android).
+//! - Full screen mode is enabled (system status and navigation bars are hidden).
 #![cfg(target_os = "android")]
 
 use std::path::PathBuf;
@@ -26,13 +26,6 @@ use wordcraft_ui_egui::{FileDialogAnswer, FileDialogRequest, Services, WordApp};
 
 /// Two Back presses within this time quit the app.
 const BACK_EXIT_WINDOW: Duration = Duration::from_millis(1800);
-/// The interface is drawn small enough that the screen is at least this many points wide: the
-/// ribbon, the status bar and the dialogs are laid out for that much room.
-const MIN_WIDTH_POINTS: f32 = 760.0;
-/// The same for the File pages (Options, Open, Save As), which have a menu beside the page.
-const BACKSTAGE_MIN_WIDTH_POINTS: f32 = 800.0;
-/// A dialog is about this many points tall: the screen must be at least that tall.
-const MIN_HEIGHT_POINTS: f32 = 520.0;
 /// A touch that moves less than this many points is a tap, not a scroll.
 const TAP_SLOP_POINTS: f32 = 12.0;
 
@@ -43,34 +36,6 @@ fn start_dir(app: &AndroidApp) -> Option<PathBuf> {
         return Some(shared);
     }
     app.external_data_path().or_else(|| app.internal_data_path())
-}
-
-/// Height in pixels of the Android status bar, or 0 when it can't be read.
-fn status_bar_height_px(app: &AndroidApp) -> f32 {
-    use jni::objects::{JObject, JValue};
-    let read = || -> jni::errors::Result<i32> {
-        // SAFETY: the pointers come from android-activity and stay valid while the app runs.
-        let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast())? };
-        let mut env = vm.attach_current_thread()?;
-        let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-        let res = env.call_method(&activity, "getResources", "()Landroid/content/res/Resources;", &[])?.l()?;
-        let name = env.new_string("status_bar_height")?;
-        let kind = env.new_string("dimen")?;
-        let pkg = env.new_string("android")?;
-        let id = env
-            .call_method(
-                &res,
-                "getIdentifier",
-                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)I",
-                &[JValue::Object(&name), JValue::Object(&kind), JValue::Object(&pkg)],
-            )?
-            .i()?;
-        if id == 0 {
-            return Ok(0);
-        }
-        env.call_method(&res, "getDimensionPixelSize", "(I)I", &[JValue::Int(id)])?.i()
-    };
-    read().map(|px| px as f32).unwrap_or(0.0)
 }
 
 /// Android 11+ shows an app no documents (.docx, .pdf, ...) outside its own folder until the user
@@ -112,6 +77,38 @@ fn ask_for_all_files_access(app: &AndroidApp) {
     }
 }
 
+/// Menghilangkan status bar dan navigation bar (Full Screen / Immersive Mode).
+fn hide_system_bars(app: &AndroidApp) {
+    use jni::objects::{JObject, JValue};
+    // SAFETY: the pointers come from android-activity and stay valid while the app runs.
+    let Ok(vm) = (unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }) else { return };
+    let Ok(mut env) = vm.attach_current_thread() else { return };
+    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+
+    let result = (|| -> jni::errors::Result<()> {
+        let window = env.call_method(&activity, "getWindow", "()Landroid/view/Window;", &[])?.l()?;
+        let decor_view = env.call_method(&window, "getDecorView", "()Landroid/view/View;", &[])?.l()?;
+        let sdk = env.get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?.i()?;
+
+        if sdk >= 30 {
+            // Android 11+ (API 30+)
+            let controller = env.call_method(&window, "getInsetsController", "()Landroid/view/WindowInsetsController;", &[])?.l()?;
+            if !controller.is_null() {
+                let hide_mask = 1 | 2; // Type.statusBars() | Type.navigationBars()
+                env.call_method(&controller, "hide", "(I)V", &[JValue::Int(hide_mask)])?;
+                let behavior = 2; // BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                env.call_method(&controller, "setSystemBarsBehavior", "(I)V", &[JValue::Int(behavior)])?;
+            }
+        } else {
+            // Android 10 dan ke bawah (Legacy)
+            let flags = 0x00000400 | 0x00000002 | 0x00001000; // FULLSCREEN | HIDE_NAVIGATION | IMMERSIVE_STICKY
+            env.call_method(&decor_view, "setSystemUiVisibility", "(I)V", &[JValue::Int(flags)])?;
+        }
+        Ok(())
+    })();
+    if result.is_err() { let _ = env.exception_clear(); }
+}
+
 fn services() -> Services {
     Services {
         // Answering with an error makes the app open its built-in file browser instead.
@@ -139,8 +136,6 @@ struct AndroidShell {
     exit_requested: bool,
     /// The File screen was open last frame.
     was_backstage: bool,
-    /// Height of the status bar in screen pixels: the app is kept below it.
-    status_bar_px: f32,
 }
 
 impl AndroidShell {
@@ -172,8 +167,12 @@ impl AndroidShell {
                         self.keyboard_wanted = false;
                     }
                 } else if let Some(start) = self.press_at.take() {
-                    if on_page && start.distance(*pos) < TAP_SLOP_POINTS {
+                    let dist = start.distance(*pos);
+                    // Jika jarak sangat kecil (Tap), izinkan keyboard. Jika besar (Swipe/Scroll), matikan.
+                    if on_page && dist < TAP_SLOP_POINTS {
                         self.keyboard_wanted = true;
+                    } else if dist >= TAP_SLOP_POINTS {
+                        self.keyboard_wanted = false;
                     }
                 }
             }
@@ -189,10 +188,22 @@ impl AndroidShell {
         if w_px <= 0.0 || h_px <= 0.0 {
             return;
         }
-        let min_width = if self.app.ui.backstage { BACKSTAGE_MIN_WIDTH_POINTS } else { MIN_WIDTH_POINTS };
-        let cap = (w_px / min_width).min(h_px / MIN_HEIGHT_POINTS);
+
+        // Deteksi orientasi layar
+        let is_portrait = h_px > w_px;
+
+        // Atur batas minimum secara dinamis berdasarkan orientasi
+        let min_width = if self.app.ui.backstage {
+            if is_portrait { 800.0 } else { 1100.0 }
+        } else {
+            if is_portrait { 500.0 } else { 760.0 } // Portrait dilebarkan agar UI membesar
+        };
+        let min_height = if is_portrait { 800.0 } else { 520.0 };
+
+        let cap = (w_px / min_width).min(h_px / min_height);
         let native = ctx.native_pixels_per_point().unwrap_or(1.0);
         let current = self.app.ui.interface_size.percent().map_or(native, |p| f32::from(p) / 100.0);
+        
         if current > cap + 0.005 {
             if let Some(size) = InterfaceSize::from_percent((f64::from(cap) * 100.0).floor()) {
                 self.app.ui.interface_size = size;
@@ -244,28 +255,23 @@ impl eframe::App for AndroidShell {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Keep the app below the status bar instead of drawing under the clock and icons.
-        let full = ui.max_rect();
-        let top = (self.status_bar_px / ui.ctx().pixels_per_point()).min(full.height() / 4.0);
-        let mut inner = full;
-        inner.min.y += top;
-        if top > 0.0 {
-            let strip = egui::Rect::from_min_max(full.min, egui::pos2(full.max.x, inner.min.y));
-            ui.painter().rect_filled(strip, 0.0, ui.visuals().panel_fill);
-        }
-        ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| self.app.ui(ui));
+        // Full screen mode: UI langsung menutupi seluruh layar tanpa terpotong status bar.
+        ui.scope_builder(egui::UiBuilder::new().max_rect(ui.max_rect()), |ui| self.app.ui(ui));
 
         // The page and text boxes report where their caret is (IME output) while they take typing.
-        // A caret on the page shows the keyboard only after a tap on the page; a text box elsewhere
-        // (the search box, a dialog field) shows it as soon as it is being edited.
         let caret = ui.ctx().output(|o| o.ime.as_ref().map(|ime| ime.cursor_rect));
-        let wants_keyboard = match caret {
-            None => false,
-            Some(caret) => match self.app.canvas.canvas_rect {
+        let wants_keyboard = if let Some(caret) = caret {
+            match self.app.canvas.canvas_rect {
                 Some(page) if page.contains(caret.center()) => self.keyboard_wanted,
                 _ => true,
-            },
+            }
+        } else {
+            false
         };
+        
+        // Pastikan egui benar-benar sedang meminta input teks sebelum keyboard muncul.
+        let wants_keyboard = wants_keyboard && ui.ctx().wants_keyboard_input();
+
         if wants_keyboard != self.keyboard_shown {
             self.keyboard_shown = wants_keyboard;
             if wants_keyboard {
@@ -294,9 +300,10 @@ pub fn android_main(app: AndroidApp) {
         // SAFETY: as above.
         unsafe { std::env::set_var("HOME", &dir) };
     }
+    
     ask_for_all_files_access(&app);
+    hide_system_bars(&app); // Memanggil fungsi Full Screen
 
-    let status_bar_px = status_bar_height_px(&app);
     let options = eframe::NativeOptions { android_app: Some(app.clone()), ..Default::default() };
     let android = app;
     let result = eframe::run_native(
@@ -319,7 +326,6 @@ pub fn android_main(app: AndroidApp) {
                 last_back: None,
                 exit_requested: false,
                 was_backstage: false,
-                status_bar_px,
             }))
         }),
     );
