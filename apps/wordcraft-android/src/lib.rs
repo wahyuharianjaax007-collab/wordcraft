@@ -11,6 +11,7 @@ use wordcraft_ui_egui::theme::InterfaceSize;
 use wordcraft_ui_egui::{FileDialogAnswer, FileDialogRequest, Services, WordApp};
 
 const BACK_EXIT_WINDOW: Duration = Duration::from_millis(1800);
+const TAP_SLOP_POINTS: f32 = 12.0;
 
 fn start_dir(app: &AndroidApp) -> Option<PathBuf> {
     let shared = PathBuf::from("/storage/emulated/0/Documents");
@@ -134,6 +135,8 @@ struct AndroidShell {
     app: WordApp,
     android: AndroidApp,
     keyboard_shown: bool,
+    keyboard_wanted: bool,
+    press_at: Option<egui::Pos2>,
     last_back: Option<Instant>,
     exit_requested: bool,
     was_backstage: bool,
@@ -151,6 +154,7 @@ impl AndroidShell {
             return;
         }
         self.last_back = Some(now);
+        self.keyboard_wanted = false;
         for pressed in [true, false] {
             raw.events.push(egui::Event::Key {
                 key: egui::Key::Escape,
@@ -161,6 +165,28 @@ impl AndroidShell {
             });
         }
         self.app.status("Press Back again to exit");
+    }
+
+    fn track_taps(&mut self, raw: &egui::RawInput) {
+        let page = self.app.canvas.canvas_rect;
+        for event in &raw.events {
+            if let egui::Event::PointerButton { pos, pressed, .. } = event {
+                let on_page = page.is_some_and(|r| r.contains(*pos));
+                if *pressed {
+                    self.press_at = Some(*pos);
+                    if !on_page {
+                        self.keyboard_wanted = false;
+                    }
+                } else if let Some(start) = self.press_at.take() {
+                    let dist = start.distance(*pos);
+                    if on_page && dist < TAP_SLOP_POINTS {
+                        self.keyboard_wanted = true;
+                    } else if dist >= TAP_SLOP_POINTS {
+                        self.keyboard_wanted = false;
+                    }
+                }
+            }
+        }
     }
 
     fn cap_interface_size(&mut self, ctx: &egui::Context) {
@@ -216,8 +242,6 @@ impl eframe::App for AndroidShell {
             self.app.ui.interface_size = InterfaceSize::AUTO;
         }
 
-        // BUG 1 FIX: Kalau landscape, paksa re-hide system bars terus-terusan
-        // biar kalau user swipe turun, dia langsung sembunyi lagi.
         if !self.is_portrait {
             let frame = ctx.cumulative_frame_nr();
             if frame % 30 == 0 {
@@ -249,6 +273,7 @@ impl eframe::App for AndroidShell {
         if back {
             self.on_back(raw);
         }
+        self.track_taps(raw);
         self.app.raw_input_hook(raw);
     }
 
@@ -268,8 +293,14 @@ impl eframe::App for AndroidShell {
         }
         ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| self.app.ui(ui));
 
-        // BUG 2 FIX: Hanya munculkan keyboard jika widget benar-benar minta teks
-        let wants_keyboard = ui.ctx().egui_wants_keyboard_input();
+        // PERBAIKAN MUTLAK KEYBOARD
+        // Kita paksa keyboard HANYA mengikuti keyboard_wanted (hasil tap di halaman),
+        // KECUALI kalau user lagi buka dialog/backstage, kita serahkan ke egui sepenuhnya.
+        let wants_keyboard = if self.app.ui.backstage || self.app.dialog.is_some() {
+            ui.ctx().egui_wants_keyboard_input()
+        } else {
+            self.keyboard_wanted
+        };
 
         if wants_keyboard != self.keyboard_shown {
             self.keyboard_shown = wants_keyboard;
@@ -278,10 +309,6 @@ impl eframe::App for AndroidShell {
             } else {
                 self.android.hide_soft_input(false);
             }
-        } else if !wants_keyboard && self.keyboard_shown {
-            // Force hide if out of sync
-            self.android.hide_soft_input(false);
-            self.keyboard_shown = false;
         }
     }
 }
@@ -320,6 +347,8 @@ pub fn android_main(app: AndroidApp) {
                 app: word,
                 android,
                 keyboard_shown: false,
+                keyboard_wanted: false,
+                press_at: None,
                 last_back: None,
                 exit_requested: false,
                 was_backstage: false,
