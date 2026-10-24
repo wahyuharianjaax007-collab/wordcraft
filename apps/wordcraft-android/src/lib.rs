@@ -270,7 +270,8 @@ impl eframe::App for AndroidShell {
         };
         
         // Pastikan egui benar-benar sedang meminta input teks sebelum keyboard muncul.
-        let wants_keyboard = wants_keyboard && ui.ctx().wants_keyboard_input();
+        // FIX E0599: Menggunakan egui_wants_keyboard_input()
+        let wants_keyboard = wants_keyboard && ui.ctx().egui_wants_keyboard_input();
 
         if wants_keyboard != self.keyboard_shown {
             self.keyboard_shown = wants_keyboard;
