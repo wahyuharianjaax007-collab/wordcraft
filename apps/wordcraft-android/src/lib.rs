@@ -13,7 +13,7 @@
 //!   press within a moment quits (asking about unsaved changes first).
 //! - The interface is never drawn larger than what fits a dialog or the File pages on the screen,
 //!   and a new or opened document is shown at "Page Width" zoom.
-//! - Full screen mode is enabled (system status and navigation bars are hidden).
+//! - Landscape mode is full screen; Portrait mode shows the status bar and avoids the notch.
 #![cfg(target_os = "android")]
 
 use std::path::PathBuf;
@@ -36,6 +36,34 @@ fn start_dir(app: &AndroidApp) -> Option<PathBuf> {
         return Some(shared);
     }
     app.external_data_path().or_else(|| app.internal_data_path())
+}
+
+/// Height in pixels of the Android status bar, or 0 when it can't be read.
+fn status_bar_height_px(app: &AndroidApp) -> f32 {
+    use jni::objects::{JObject, JValue};
+    let read = || -> jni::errors::Result<i32> {
+        // SAFETY: the pointers come from android-activity and stay valid while the app runs.
+        let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast())? };
+        let mut env = vm.attach_current_thread()?;
+        let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+        let res = env.call_method(&activity, "getResources", "()Landroid/content/res/Resources;", &[])?.l()?;
+        let name = env.new_string("status_bar_height")?;
+        let kind = env.new_string("dimen")?;
+        let pkg = env.new_string("android")?;
+        let id = env
+            .call_method(
+                &res,
+                "getIdentifier",
+                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)I",
+                &[JValue::Object(&name), JValue::Object(&kind), JValue::Object(&pkg)],
+            )?
+            .i()?;
+        if id == 0 {
+            return Ok(0);
+        }
+        env.call_method(&res, "getDimensionPixelSize", "(I)I", &[JValue::Int(id)])?.i()
+    };
+    read().map(|px| px as f32).unwrap_or(0.0)
 }
 
 /// Android 11+ shows an app no documents (.docx, .pdf, ...) outside its own folder until the user
@@ -77,8 +105,8 @@ fn ask_for_all_files_access(app: &AndroidApp) {
     }
 }
 
-/// Menghilangkan status bar dan navigation bar (Full Screen / Immersive Mode).
-fn hide_system_bars(app: &AndroidApp) {
+/// Toggles full screen mode based on the argument.
+fn set_fullscreen(app: &AndroidApp, fullscreen: bool) {
     use jni::objects::{JObject, JValue};
     // SAFETY: the pointers come from android-activity and stay valid while the app runs.
     let Ok(vm) = (unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }) else { return };
@@ -94,19 +122,29 @@ fn hide_system_bars(app: &AndroidApp) {
             // Android 11+ (API 30+)
             let controller = env.call_method(&window, "getInsetsController", "()Landroid/view/WindowInsetsController;", &[])?.l()?;
             if !controller.is_null() {
-                let hide_mask = 1 | 2; // Type.statusBars() | Type.navigationBars()
-                env.call_method(&controller, "hide", "(I)V", &[JValue::Int(hide_mask)])?;
-                let behavior = 2; // BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                env.call_method(&controller, "setSystemBarsBehavior", "(I)V", &[JValue::Int(behavior)])?;
+                let mask = 1 | 2; // Type.statusBars() | Type.navigationBars()
+                if fullscreen {
+                    env.call_method(&controller, "hide", "(I)V", &[JValue::Int(mask)])?;
+                    let behavior = 2; // BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    env.call_method(&controller, "setSystemBarsBehavior", "(I)V", &[JValue::Int(behavior)])?;
+                } else {
+                    env.call_method(&controller, "show", "(I)V", &[JValue::Int(mask)])?;
+                }
             }
         } else {
             // Android 10 dan ke bawah (Legacy)
-            let flags = 0x00000400 | 0x00000002 | 0x00001000; // FULLSCREEN | HIDE_NAVIGATION | IMMERSIVE_STICKY
+            let flags = if fullscreen {
+                0x00000400 | 0x00000002 | 0x00001000 // FULLSCREEN | HIDE_NAVIGATION | IMMERSIVE_STICKY
+            } else {
+                0 // VISIBLE
+            };
             env.call_method(&decor_view, "setSystemUiVisibility", "(I)V", &[JValue::Int(flags)])?;
         }
         Ok(())
     })();
-    if result.is_err() { let _ = env.exception_clear(); }
+    if result.is_err() {
+        let _ = env.exception_clear();
+    }
 }
 
 fn services() -> Services {
@@ -136,6 +174,12 @@ struct AndroidShell {
     exit_requested: bool,
     /// The File screen was open last frame.
     was_backstage: bool,
+    /// Height of the status bar in screen pixels: the app is kept below it in portrait.
+    status_bar_px: f32,
+    /// Tracks the orientation to toggle fullscreen correctly.
+    is_portrait: bool,
+    /// Tracks if fullscreen is currently active.
+    fullscreen_active: bool,
 }
 
 impl AndroidShell {
@@ -150,7 +194,13 @@ impl AndroidShell {
         self.last_back = Some(now);
         self.keyboard_wanted = false;
         for pressed in [true, false] {
-            raw.events.push(egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed, repeat: false, modifiers: Default::default() });
+            raw.events.push(egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: Default::default(),
+            });
         }
         self.app.status("Press Back again to exit");
     }
@@ -179,8 +229,7 @@ impl AndroidShell {
         }
     }
 
-    /// Never draw the interface so large that a dialog, the ribbon or the File pages don't fit the
-    /// screen. Only ever makes it smaller: a smaller size chosen in File > Options is kept.
+    /// Atur ukuran antarmuka secara dinamis berdasarkan orientasi layar dengan batas aman.
     fn cap_interface_size(&mut self, ctx: &egui::Context) {
         let ppp = ctx.pixels_per_point();
         let rect = ctx.content_rect();
@@ -189,22 +238,25 @@ impl AndroidShell {
             return;
         }
 
-        // Deteksi orientasi layar
-        let is_portrait = h_px > w_px;
+        // Target skala: Landscape 200% (2.0), Portrait 240% (2.4)
+        let target_scale = if self.is_portrait { 2.4 } else { 2.0 };
 
-        // Atur batas minimum secara dinamis berdasarkan orientasi
-        let min_width = if self.app.ui.backstage {
-            if is_portrait { 800.0 } else { 1100.0 }
-        } else {
-            if is_portrait { 500.0 } else { 760.0 } // Portrait dilebarkan agar UI membesar
-        };
-        let min_height = if is_portrait { 800.0 } else { 520.0 };
+        let min_width = if self.is_portrait { 360.0 } else { 760.0 };
+        let min_height = if self.is_portrait { 360.0 } else { 520.0 };
 
-        let cap = (w_px / min_width).min(h_px / min_height);
+        let max_fit_scale = (w_px / min_width).min(h_px / min_height);
+        let cap = target_scale.min(max_fit_scale);
+
         let native = ctx.native_pixels_per_point().unwrap_or(1.0);
         let current = self.app.ui.interface_size.percent().map_or(native, |p| f32::from(p) / 100.0);
-        
-        if current > cap + 0.005 {
+
+        // Jika masih Auto, ATAU jika masih nyangkut di batas lama (160%), paksa ubah ke target baru.
+        if self.app.ui.interface_size.percent().is_none() || (current <= 1.6 + 0.005 && target_scale > 1.6) {
+            if let Some(size) = InterfaceSize::from_percent((f64::from(cap) * 100.0).floor()) {
+                self.app.ui.interface_size = size;
+            }
+        } else if current > cap + 0.005 {
+            // Jika user milih manual tapi kepotong layar, kecilin
             if let Some(size) = InterfaceSize::from_percent((f64::from(cap) * 100.0).floor()) {
                 self.app.ui.interface_size = size;
             }
@@ -225,9 +277,26 @@ impl AndroidShell {
 
 impl eframe::App for AndroidShell {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let rect = ctx.content_rect();
+        let is_portrait = rect.height() > rect.width();
+        
+        // Deteksi perubahan orientasi
+        if self.is_portrait != is_portrait {
+            self.is_portrait = is_portrait;
+            
+            // Landscape = full screen (true), Portrait = tidak full screen (false)
+            let fullscreen = !is_portrait;
+            set_fullscreen(&self.android, fullscreen);
+            self.fullscreen_active = fullscreen;
+            
+            // Reset ke Auto agar skala dihitung ulang saat rotasi
+            self.app.ui.interface_size = InterfaceSize::AUTO;
+        }
+
         self.cap_interface_size(ctx);
         self.app.logic(ctx);
         self.fit_page_after_file_screen();
+        
         if std::mem::take(&mut self.exit_requested) && self.app.close_requested() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
@@ -255,8 +324,21 @@ impl eframe::App for AndroidShell {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Full screen mode: UI langsung menutupi seluruh layar tanpa terpotong status bar.
-        ui.scope_builder(egui::UiBuilder::new().max_rect(ui.max_rect()), |ui| self.app.ui(ui));
+        // Keep the app below the status bar in portrait, but use full height in landscape.
+        let full = ui.max_rect();
+        let top = if self.is_portrait {
+            (self.status_bar_px / ui.ctx().pixels_per_point()).min(full.height() / 4.0)
+        } else {
+            0.0
+        };
+        
+        let mut inner = full;
+        inner.min.y += top;
+        if top > 0.0 {
+            let strip = egui::Rect::from_min_max(full.min, egui::pos2(full.max.x, inner.min.y));
+            ui.painter().rect_filled(strip, 0.0, ui.visuals().panel_fill);
+        }
+        ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| self.app.ui(ui));
 
         // The page and text boxes report where their caret is (IME output) while they take typing.
         let caret = ui.ctx().output(|o| o.ime.as_ref().map(|ime| ime.cursor_rect));
@@ -270,7 +352,6 @@ impl eframe::App for AndroidShell {
         };
         
         // Pastikan egui benar-benar sedang meminta input teks sebelum keyboard muncul.
-        // FIX E0599: Menggunakan egui_wants_keyboard_input()
         let wants_keyboard = wants_keyboard && ui.ctx().egui_wants_keyboard_input();
 
         if wants_keyboard != self.keyboard_shown {
@@ -303,8 +384,8 @@ pub fn android_main(app: AndroidApp) {
     }
     
     ask_for_all_files_access(&app);
-    hide_system_bars(&app); // Memanggil fungsi Full Screen
 
+    let status_bar_px = status_bar_height_px(&app);
     let options = eframe::NativeOptions { android_app: Some(app.clone()), ..Default::default() };
     let android = app;
     let result = eframe::run_native(
@@ -327,6 +408,9 @@ pub fn android_main(app: AndroidApp) {
                 last_back: None,
                 exit_requested: false,
                 was_backstage: false,
+                status_bar_px,
+                is_portrait: false, // Force first frame logic to set the correct state
+                fullscreen_active: false,
             }))
         }),
     );
