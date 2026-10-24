@@ -14,7 +14,7 @@ pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
         Box::new(|cc| {
             // Adjust UI scaling for mobile screens
             configure_mobile_ui(&cc.egui_ctx);
-            
+
             Box::new(WordCraftAndroidApp::new(cc))
         }),
     );
@@ -30,13 +30,13 @@ fn configure_mobile_ui(ctx: &egui::Context) {
 
     // 2. Adjust global style spacing and margins to prevent dialog popups from clipping offscreen
     let mut style = (*ctx.style()).clone();
-    
+
     // Ensure window margins fit within mobile viewports
     style.spacing.window_margin = egui::Margin::same(12.0);
     style.spacing.item_spacing = egui::vec2(8.0, 8.0);
     style.spacing.button_padding = egui::vec2(10.0, 8.0);
-    style.spacing.interact_size.y = style.spacing.interact_size.y.max(32.0); // Make touch targets larger
-    
+    style.spacing.interact_size.y = style.spacing.interact_size.y.max(32.0);
+
     ctx.set_style(style);
 }
 
