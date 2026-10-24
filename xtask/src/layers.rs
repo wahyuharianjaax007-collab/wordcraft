@@ -55,6 +55,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("cli", Class::Exempt),
     ("web", Class::Exempt),
     ("xtask", Class::Exempt),
+    ("android", Class::Exempt),
 ];
 
 /// Explicit orderings *within* a layer (earlier may be used by later).
@@ -311,7 +312,7 @@ mod tests {
 
     #[test]
     fn apps_and_xtask_exempt() {
-        for app in ["wordcraft", "wordcraft-cli", "wordcraft-web", "xtask"] {
+        for app in ["wordcraft", "wordcraft-cli", "wordcraft-web", "xtask", "android"] {
             assert!(check(&[c(app, &[("egui", Normal, false), ("wordcraft-ui-egui", Normal, true)])]).is_empty());
         }
     }
