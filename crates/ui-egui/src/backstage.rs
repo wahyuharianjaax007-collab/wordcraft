@@ -32,21 +32,13 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
         app.ui.backstage_page = "home".into();
     }
     let mac = app.integrated_titlebar;
-
-    let is_portrait = ui.ctx().content_rect().height() > ui.ctx().content_rect().width();
-    let nav_width = if is_portrait { 140.0 } else { 200.0 };
-    let icon_cx = if is_portrait { 22.0 } else { 31.0 };
-    let text_x = if is_portrait { 42.0 } else { 52.0 };
-    let font_size = if is_portrait { 13.0 } else { 14.0 };
-    let bottom_text_x = if is_portrait { 12.0 } else { 22.0 };
-
     egui::Panel::left("backstage_nav")
-        .exact_size(nav_width)
+        .exact_size(200.0)
         .resizable(false)
         .frame(egui::Frame::NONE.fill(t.nav).inner_margin(egui::Margin { left: 0, right: 0, top: if mac { 0 } else { 12 }, bottom: 12 }))
         .show(ui, |ui| {
             let back = if mac {
-                let (band, drag) = ui.allocate_exact_size(vec2(nav_width, app.mac_titlebar.height), Sense::click_and_drag());
+                let (band, drag) = ui.allocate_exact_size(vec2(200.0, app.mac_titlebar.height), Sense::click_and_drag());
                 if drag.drag_started() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
@@ -55,7 +47,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                 icons::paint(ui.painter(), Rect::from_center_size(c, vec2(18.0, 18.0)), "chevronLeft", egui::Color32::WHITE, egui::Color32::WHITE);
                 resp
             } else {
-                let (r, _) = ui.allocate_exact_size(vec2(nav_width, 40.0), Sense::hover());
+                let (r, _) = ui.allocate_exact_size(vec2(200.0, 40.0), Sense::hover());
                 let c = pos2(r.min.x + 26.0, r.center().y);
                 let resp = ui.interact(Rect::from_center_size(c, vec2(22.0, r.height())), ui.id().with("backstage_back"), Sense::click());
                 icons::paint(ui.painter(), Rect::from_center_size(c, vec2(18.0, 18.0)), "chevronLeft", egui::Color32::WHITE, egui::Color32::WHITE);
@@ -68,7 +60,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
             ui.add_space(if mac { 12.0 } else { 6.0 });
             for (id, label, icon) in PAGES {
                 let on = has_document || works_without_document(id);
-                let (r, resp) = ui.add_enabled_ui(on, |ui| ui.allocate_exact_size(vec2(nav_width, 38.0), Sense::click())).inner;
+                let (r, resp) = ui.add_enabled_ui(on, |ui| ui.allocate_exact_size(vec2(200.0, 38.0), Sense::click())).inner;
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, on, tl!(label)));
                 let active = app.ui.backstage_page == id;
                 if active {
@@ -77,12 +69,12 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                     ui.painter().rect_filled(r, 0.0, egui::Color32::from_white_alpha(26));
                 }
                 let ink = if on { egui::Color32::WHITE } else { egui::Color32::from_white_alpha(110) };
-                icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + icon_cx, r.center().y), vec2(18.0, 18.0)), icon, ink, ink);
+                icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 31.0, r.center().y), vec2(18.0, 18.0)), icon, ink, ink);
                 ui.painter().text(
-                    pos2(r.min.x + text_x, r.center().y),
+                    pos2(r.min.x + 52.0, r.center().y),
                     Align2::LEFT_CENTER,
                     tl!(label),
-                    if active { semibold(font_size) } else { medium(font_size) },
+                    if active { semibold(14.0) } else { medium(14.0) },
                     ink,
                 );
                 if resp.clicked() {
@@ -110,16 +102,20 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                 }
             }
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                let label = "About";
-                let id = "about";
-                let (r, resp) = ui.allocate_exact_size(vec2(nav_width, 32.0), Sense::click());
-                resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tl!(label)));
-                if resp.hovered() {
-                    ui.painter().rect_filled(r, 0.0, egui::Color32::from_white_alpha(26));
-                }
-                ui.painter().text(pos2(r.min.x + bottom_text_x, r.center().y), Align2::LEFT_CENTER, tl!(label), regular(13.0), egui::Color32::WHITE);
-                if resp.clicked() {
-                    app.dialog = crate::dialogs::Dialog::open("about", app);
+                for (label, id) in [("About", "about"), ("Discord community", "discord")] {
+                    let (r, resp) = ui.allocate_exact_size(vec2(200.0, 32.0), Sense::click());
+                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tl!(label)));
+                    if resp.hovered() {
+                        ui.painter().rect_filled(r, 0.0, egui::Color32::from_white_alpha(26));
+                    }
+                    ui.painter().text(pos2(r.min.x + 22.0, r.center().y), Align2::LEFT_CENTER, tl!(label), regular(13.0), egui::Color32::WHITE);
+                    if resp.clicked() {
+                        if id == "discord" {
+                            let _ = app.run("ui.discord", json!({}));
+                        } else {
+                            app.dialog = crate::dialogs::Dialog::open("about", app);
+                        }
+                    }
                 }
             });
         });
@@ -183,30 +179,15 @@ fn recovery_page(app: &mut WordApp, ui: &mut Ui) {
         }
     });
     ui.add_space(20.0);
-    
-    let is_portrait = ui.ctx().content_rect().height() > ui.ctx().content_rect().width();
-    if is_portrait {
-        ui.vertical(|ui| {
-            if ui.button(tl!("Continue without restoring")).clicked() {
-                let _ = app.run("ui.backstage", json!({"value": false}));
-                app.canvas.want_focus = true;
-            }
-            ui.add_space(8.0);
-            if ui.add_enabled(!busy && app.session.recovery_ready(), egui::Button::new(tl!("Refresh"))).clicked() {
-                let _ = app.run("file.recover", json!({"refresh": true}));
-            }
-        });
-    } else {
-        ui.horizontal(|ui| {
-            if ui.button(tl!("Continue without restoring")).clicked() {
-                let _ = app.run("ui.backstage", json!({"value": false}));
-                app.canvas.want_focus = true;
-            }
-            if ui.add_enabled(!busy && app.session.recovery_ready(), egui::Button::new(tl!("Refresh"))).clicked() {
-                let _ = app.run("file.recover", json!({"refresh": true}));
-            }
-        });
-    }
+    ui.horizontal(|ui| {
+        if ui.button(tl!("Continue without restoring")).clicked() {
+            let _ = app.run("ui.backstage", json!({"value": false}));
+            app.canvas.want_focus = true;
+        }
+        if ui.add_enabled(!busy && app.session.recovery_ready(), egui::Button::new(tl!("Refresh"))).clicked() {
+            let _ = app.run("file.recover", json!({"refresh": true}));
+        }
+    });
 }
 
 fn works_without_document(page: &str) -> bool {
@@ -293,25 +274,14 @@ fn home_page(app: &mut WordApp, ui: &mut Ui) {
         },
     );
     
-    let is_portrait = ui.ctx().content_rect().height() > ui.ctx().content_rect().width();
-
-    if is_portrait {
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing = vec2(0.0, 18.0);
+    egui::ScrollArea::horizontal().show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = vec2(18.0, 0.0);
             for (label, template) in TEMPLATES.into_iter().take(HOME_TEMPLATES) {
                 template_tile(ui, app, label, template);
             }
         });
-    } else {
-        egui::ScrollArea::horizontal().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing = vec2(18.0, 0.0);
-                for (label, template) in TEMPLATES.into_iter().take(HOME_TEMPLATES) {
-                    template_tile(ui, app, label, template);
-                }
-            });
-        });
-    }
+    });
     
     ui.add_space(8.0);
     let more = ui.add(egui::Label::new(egui::RichText::new(tl!("More templates →")).font(medium(13.5)).color(t.accent)).sense(Sense::click()));
@@ -339,27 +309,15 @@ fn new_page(app: &mut WordApp, ui: &mut Ui) {
         ui.label(egui::RichText::new(tl!("No templates match your search.")).color(t.text_dim));
         return;
     }
-    
-    let is_portrait = ui.ctx().content_rect().height() > ui.ctx().content_rect().width();
-
     if !found.is_empty() {
-        if is_portrait {
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing = vec2(0.0, 18.0);
+        egui::ScrollArea::horizontal().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = vec2(18.0, 18.0);
                 for (label, template) in found {
                     template_tile(ui, app, label, template);
                 }
             });
-        } else {
-            egui::ScrollArea::horizontal().show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing = vec2(18.0, 18.0);
-                    for (label, template) in found {
-                        template_tile(ui, app, label, template);
-                    }
-                });
-            });
-        }
+        });
     }
     
     let Some(folder) = folder else { return };
@@ -699,9 +657,7 @@ fn export_page(app: &mut WordApp, ui: &mut Ui) {
     
     let is_portrait = ui.ctx().content_rect().height() > ui.ctx().content_rect().width();
     if is_portrait {
-        ui.set_max_width(ui.available_width());
-    } else {
-        ui.set_max_width(ui.available_width().min(600.0));
+        ui.set_max_width(ui.available_width().min(400.0));
     }
     crate::print_page::export_formats(app, ui);
 }
