@@ -171,9 +171,6 @@ fn print_settings(app: &mut WordApp, ui: &mut Ui, total: usize, current: (usize,
     
     let btn_width = if is_portrait { ui.available_width().max(150.0) } else { 320.0 };
 
-    // #2958: as in Word, the page's action leads the settings, in the accent the app
-    // gives a dialog's primary button: the first thing seen, and plainly a button
-    // that prints now rather than one more setting in the list below.
     if hook
         && ui
             .add_enabled(!native || app.printing.ready(), crate::widgets::primary_button(ui, tl!("Print")).min_size(vec2(btn_width, 34.0)))
@@ -221,7 +218,6 @@ fn print_settings(app: &mut WordApp, ui: &mut Ui, total: usize, current: (usize,
 
     ui.label(egui::RichText::new(tl!("Pages")).font(medium(13.0)));
     if choice(ui, "print_range", &mut app.ui.print.range, &RANGES) {
-        // Show the first page that will print.
         app.ui.print.preview = if app.ui.print.range == "all" { 0 } else { current.0.min(total.saturating_sub(1)) };
     }
     if app.ui.print.range == "custom" {
@@ -235,7 +231,6 @@ fn print_settings(app: &mut WordApp, ui: &mut Ui, total: usize, current: (usize,
     choice(ui, "print_parity", &mut app.ui.print.parity, &PARITIES);
     ui.label(egui::RichText::new(tl!("Orientation")).font(medium(13.0)));
     choice(ui, "print_orientation", &mut app.ui.print.orientation, &ORIENTATIONS);
-    // Word: Pages per sheet › Scale to paper size. Only the printout changes.
     ui.label(egui::RichText::new(tl!("Scale to paper size")).font(medium(13.0)));
     let papers: Vec<(&str, &str)> =
         std::iter::once((NO_SCALING, "No Scaling")).chain(wordcraft_geom::PAPER_SIZES.iter().map(|(n, _, _)| (*n, *n))).collect();
@@ -280,11 +275,9 @@ fn preview(app: &mut WordApp, ui: &mut Ui, lay: &DocLayout, total: usize) {
     let ctx = ui.ctx().clone();
     let page = app.ui.print.preview;
     let (page_w, page_h) = lay.pages.get(page).map_or((612.0, 792.0), |p| (p.w.max(1.0), p.h.max(1.0)));
-    // Scale to paper size: the sheet is the chosen paper with the page scaled and centred on it.
     let sheet = app.ui.print.paper_size().map(|(w, h)| wordcraft_geom::fit_to_paper(page_w, page_h, w, h));
     let (pw, ph) = sheet.map_or((page_w, page_h), |f| (f.paper_w, f.paper_h));
     let pane = vec2(ui.available_width().max(120.0), (ui.available_height() - PREVIEW_BAR).max(120.0));
-    // Screen points per page point.
     let fit = ((pane.x - 2.0 * PREVIEW_MARGIN) / pw).min((pane.y - 2.0 * PREVIEW_MARGIN) / ph).max(0.01);
     let scale = app.ui.print.zoom.map_or(fit, |z| z * crate::canvas::PX_PER_PT);
     let size = vec2(pw * scale, ph * scale);
@@ -330,7 +323,6 @@ fn preview(app: &mut WordApp, ui: &mut Ui, lay: &DocLayout, total: usize) {
             if nav(ui, "plus", tl!("Zoom In"), z < 5.0) {
                 app.ui.print.zoom = Some(zoom_step(z, true));
             }
-            // A narrow window shortens the slider, then drops it, before it covers the page indicator.
             let room = ui.available_width() - 26.0 - 2.0 * ui.spacing().item_spacing.x - 12.0;
             if room >= 40.0 {
                 let mut v = z;
@@ -368,7 +360,7 @@ pub fn export_formats(app: &mut WordApp, ui: &mut Ui) {
         ("Plain text (*.txt)", "txt"),
         ("Page image (*.png)", "png"),
     ] {
-        if ui.add(egui::Button::new(egui::RichText::new(tl!(label)).font(font)).min_size(vec2(btn_width, 34.0))).clicked() {
+        if ui.add(egui::Button::new(egui::RichText::new(tl!(label)).font(font.clone())).min_size(vec2(btn_width, 34.0))).clicked() {
             app.export_dialog(ext);
         }
         ui.add_space(4.0);
