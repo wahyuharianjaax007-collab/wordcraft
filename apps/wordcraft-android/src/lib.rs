@@ -46,9 +46,7 @@ pub struct WordCraftAndroidApp {
 
 impl WordCraftAndroidApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        Self {
-            inner: WordCraftApp::new(cc),
-        }
+        Self { inner: WordCraftApp::new(cc) }
     }
 }
 
