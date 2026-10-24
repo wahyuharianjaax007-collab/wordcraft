@@ -28,6 +28,7 @@ android_logger = "0.14"
 [package.metadata.android]
 package = "org.wordcraft.android"
 apk_name = "WordCraft"
+window_soft_input_mode = "stateAlwaysHidden"
 build_targets = ["aarch64-linux-android"]
 
 [package.metadata.android.sdk]
@@ -50,9 +51,3 @@ max_sdk_version = 29
 [[package.metadata.android.uses_permission]]
 name = "android.permission.WRITE_EXTERNAL_STORAGE"
 max_sdk_version = 29
-
-[package.metadata.android]
-apk_name = "WordCraft"
-icon = "icon.png"
-window_soft_input_mode = "stateAlwaysHidden"
-# (biarkan baris lain di bawahnya tetap ada)
