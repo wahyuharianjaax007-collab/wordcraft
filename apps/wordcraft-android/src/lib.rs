@@ -208,7 +208,7 @@ impl AndroidShell {
         }
 
         // Target skala: Landscape 200% (2.0), Portrait 240% (2.4)
-        let target_scale = if self.is_portrait { 2.4 } else { 2.0 };
+        let target_scale: f32 = if self.is_portrait { 2.4 } else { 2.0 };
 
         let min_width = if self.is_portrait { 360.0 } else { 760.0 };
         let min_height = if self.is_portrait { 360.0 } else { 520.0 };
