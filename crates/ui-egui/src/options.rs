@@ -165,18 +165,22 @@ pub fn page(app: &mut WordApp, ui: &mut Ui) {
         let (line, _) = ui.allocate_exact_size(vec2(1.0, 420.0), egui::Sense::hover());
         ui.painter().rect_filled(line, 0.0, t.border);
         ui.add_space(20.0);
-        ui.vertical(|ui| {
-            ui.set_max_width(640.0);
-            match current.as_str() {
-                "display" => display(app, ui),
-                "proofing" => proofing(app, ui),
-                "save" => save(app, ui),
-                "language" => language(app, ui),
-                "accessibility" => accessibility(app, ui),
-                "advanced" => advanced(app, ui),
-                "agents" => agents(ui),
-                _ => general(app, ui),
-            }
+        
+        // PERBAIKAN POIN 5: Bungkus panel kanan dengan ScrollArea agar bisa digeser (swipe) jika layar sempit
+        egui::ScrollArea::horizontal().id_salt("options_scroll_right").show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.set_max_width(640.0);
+                match current.as_str() {
+                    "display" => display(app, ui),
+                    "proofing" => proofing(app, ui),
+                    "save" => save(app, ui),
+                    "language" => language(app, ui),
+                    "accessibility" => accessibility(app, ui),
+                    "advanced" => advanced(app, ui),
+                    "agents" => agents(ui),
+                    _ => general(app, ui),
+                }
+            });
         });
     });
 }
@@ -320,7 +324,8 @@ fn dictionaries(app: &mut WordApp, ui: &mut Ui) {
     let id = egui::Id::new("options_dictionaries_folder");
     let mut folder = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| saved.clone());
     ui.label(tl!("Dictionaries folder:"));
-    ui.horizontal(|ui| {
+    // PERBAIKAN POIN 5: Menggunakan horizontal_wrapped agar tombol turun ke bawah jika sempit
+    ui.horizontal_wrapped(|ui| {
         let r = ui.add(egui::TextEdit::singleline(&mut folder).desired_width(320.0).hint_text(tl!("Not set: the system's usual places")));
         let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         let changed = folder.trim() != saved;
@@ -409,7 +414,8 @@ fn custom_dictionary(app: &mut WordApp, ui: &mut Ui) {
     });
     let id = egui::Id::new("options_dictionary_new");
     let mut word = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_default();
-    ui.horizontal(|ui| {
+    // PERBAIKAN POIN 5: Gunakan horizontal_wrapped
+    ui.horizontal_wrapped(|ui| {
         let r = ui.add(egui::TextEdit::singleline(&mut word).desired_width(220.0).char_limit(MAX_WORD_CHARS).hint_text(tl!("New word")));
         let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         let w = word.trim().to_string();
@@ -480,7 +486,7 @@ fn accessibility(app: &mut WordApp, ui: &mut Ui) {
     ui.add_space(8.0);
     section(ui, "Read Aloud");
     let mut rate = app.session.read_aloud.rate();
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(tl!("Speed"));
         let r = ui.add(egui::Slider::new(&mut rate, MIN_RATE..=MAX_RATE).step_by(0.05).custom_formatter(|v, _| format!("{v:.2}×")));
         if r.changed() {
@@ -577,13 +583,14 @@ fn advanced(app: &mut WordApp, ui: &mut Ui) {
     }
     ui.add_space(8.0);
     section(ui, "Customize");
-    ui.horizontal(|ui| {
+    // PERBAIKAN POIN 5: Gunakan horizontal_wrapped
+    ui.horizontal_wrapped(|ui| {
         ui.label(tl!("Keyboard shortcuts:"));
         if ui.button(tl!("Customize…")).clicked() {
             let _ = app.run("tools.customizeKeyboard", json!({}));
         }
     });
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(tl!("Ribbon and Quick Access Toolbar:"));
         if ui.button(tl!("Customize…")).clicked() {
             let _ = app.run("tools.customizeRibbon", json!({}));
@@ -599,7 +606,8 @@ fn templates_folder(app: &mut WordApp, ui: &mut Ui) {
     let mut folder = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| saved.clone());
     let default = app.services.templates_dir.as_ref().map(|d| d.to_string_lossy().into_owned());
     ui.label(tl!("User templates:"));
-    ui.horizontal(|ui| {
+    // PERBAIKAN POIN 5: Gunakan horizontal_wrapped
+    ui.horizontal_wrapped(|ui| {
         let hint = default.clone().unwrap_or_else(|| tl!("Not set").to_string());
         let r = ui.add(egui::TextEdit::singleline(&mut folder).desired_width(320.0).hint_text(hint));
         let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -629,7 +637,8 @@ fn agents(ui: &mut Ui) {
 /// Interface theme: Light, Dark, or follow the system's appearance (#115).
 fn theme_picker(app: &mut WordApp, ui: &mut Ui) {
     use crate::theme::Appearance;
-    ui.horizontal(|ui| {
+    // PERBAIKAN POIN 5: Gunakan horizontal_wrapped
+    ui.horizontal_wrapped(|ui| {
         ui.label(tl!("Interface theme:"));
         egui::ComboBox::from_id_salt("interface_theme").selected_text(tl!(app.ui.theme.label())).width(220.0).show_ui(ui, |ui| {
             for a in Appearance::ALL {
@@ -649,7 +658,8 @@ fn interface_size_picker(app: &mut WordApp, ui: &mut Ui) {
     let native = ui.ctx().native_pixels_per_point().unwrap_or(1.0);
     let auto = crate::i18n::fmt(tl!("Auto ({percent}%)"), &[("percent", &InterfaceSize::AUTO.drawn_percent(native).to_string())]);
     let selected = size.percent().map_or_else(|| auto.clone(), |pct| format!("{pct}%"));
-    ui.horizontal(|ui| {
+    // PERBAIKAN POIN 5: Gunakan horizontal_wrapped
+    ui.horizontal_wrapped(|ui| {
         ui.label(tl!("Interface size:"));
         egui::ComboBox::from_id_salt("interface_size").selected_text(selected).width(220.0).show_ui(ui, |ui| {
             if ui.selectable_label(size.is_auto(), auto).clicked() {
@@ -675,7 +685,8 @@ fn interface_size_picker(app: &mut WordApp, ui: &mut Ui) {
 /// setting" a line says what the system reports, so it is plain what the choice comes to here.
 fn animations_picker(app: &mut WordApp, ui: &mut Ui) {
     use crate::theme::Animations;
-    ui.horizontal(|ui| {
+    // PERBAIKAN POIN 5: Gunakan horizontal_wrapped
+    ui.horizontal_wrapped(|ui| {
         ui.label(tl!("Animation effects:"));
         egui::ComboBox::from_id_salt("animation_effects").selected_text(tl!(app.ui.animations.label())).width(220.0).show_ui(ui, |ui| {
             for a in Animations::ALL {
@@ -704,7 +715,8 @@ fn language_picker(app: &mut WordApp, ui: &mut Ui) {
     let system = crate::i18n::system_lang();
     let auto_label = crate::i18n::fmt(tl!("Automatic ({language})"), &[("language", system.name())]);
     let current = if app.ui.language == AUTO { auto_label.clone() } else { Lang::from_pref(&app.ui.language).name().to_string() };
-    ui.horizontal(|ui| {
+    // PERBAIKAN POIN 5: Gunakan horizontal_wrapped
+    ui.horizontal_wrapped(|ui| {
         ui.label(tl!("Interface language:"));
         egui::ComboBox::from_id_salt("interface_language").selected_text(current).width(220.0).show_ui(ui, |ui| {
             if ui.selectable_label(app.ui.language == AUTO, auto_label.as_str()).clicked() {
@@ -813,7 +825,8 @@ fn default_app_button(app: &mut WordApp, ui: &mut Ui) {
 /// File › Options › Advanced › Numeral).
 fn numeral_picker(app: &mut WordApp, ui: &mut Ui) {
     use wordcraft_layout::NumeralMode;
-    ui.horizontal(|ui| {
+    // PERBAIKAN POIN 5: Gunakan horizontal_wrapped
+    ui.horizontal_wrapped(|ui| {
         ui.label(tl!("Numerals:"));
         let mut sel = app.session.view.numeral;
         egui::ComboBox::from_id_salt("numerals").selected_text(tl!(sel.label())).width(220.0).show_ui(ui, |ui| {
