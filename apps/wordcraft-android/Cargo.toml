@@ -28,16 +28,13 @@ android_logger = "0.14"
 [package.metadata.android]
 package = "org.wordcraft.android"
 apk_name = "WordCraft"
+icon = "@mipmap/ic_launcher"
+resources = "res"
 window_soft_input_mode = "stateAlwaysHidden"
 build_targets = ["aarch64-linux-android"]
 
-[package.metadata.android.sdk]
-min_sdk_version = 26
-target_sdk_version = 34
-
 [package.metadata.android.application]
 label = "WordCraft"
-icon = "icon.png"
 
 # Android 11+: lets the built-in file browser see Documents/Downloads once the user switches on
 # "Allow access to all files" for the app (Settings > Apps > WordCraft > Permissions).
