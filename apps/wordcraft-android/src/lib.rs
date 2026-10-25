@@ -103,19 +103,15 @@ fn setup_edge_to_edge(app: &AndroidApp) {
 
     let result = (|| -> jni::errors::Result<()> {
         let window = env.call_method(&activity, "getWindow", "()Landroid/view/Window;", &[])?.l()?;
-        // 1. Transparankan status bar dan navigation bar
         env.call_method(&window, "setStatusBarColor", "(I)V", &[JValue::Int(0)])?;
         env.call_method(&window, "setNavigationBarColor", "(I)V", &[JValue::Int(0)])?;
         
-        // 2. Izinkan aplikasi menggambar di belakang system bars
         let decor_view = env.call_method(&window, "getDecorView", "()Landroid/view/View;", &[])?.l()?;
         let sdk = env.get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?.i()?;
         if sdk >= 30 {
-            // Android 11+ (API 30+)
             env.call_method(&window, "setDecorFitsSystemWindows", "(Z)V", &[JValue::Bool(0)])?;
         } else {
-            // Android 10 dan ke bawah
-            let flags = 0x00000100 | 0x00000400; // LAYOUT_STABLE | LAYOUT_FULLSCREEN
+            let flags = 0x00000100 | 0x00000400;
             env.call_method(&decor_view, "setSystemUiVisibility", "(I)V", &[JValue::Int(flags)])?;
         }
         Ok(())
@@ -174,10 +170,10 @@ fn set_fullscreen(app: &AndroidApp, fullscreen: bool) {
         if sdk >= 30 {
             let controller = env.call_method(&window, "getInsetsController", "()Landroid/view/WindowInsetsController;", &[])?.l()?;
             if !controller.is_null() {
-                let mask = 1 | 2; // statusBars | navigationBars
+                let mask = 1 | 2;
                 if fullscreen {
                     env.call_method(&controller, "hide", "(I)V", &[JValue::Int(mask)])?;
-                    let behavior = 2; // BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    let behavior = 2;
                     env.call_method(&controller, "setSystemBarsBehavior", "(I)V", &[JValue::Int(behavior)])?;
                 } else {
                     env.call_method(&controller, "show", "(I)V", &[JValue::Int(mask)])?;
@@ -185,7 +181,7 @@ fn set_fullscreen(app: &AndroidApp, fullscreen: bool) {
             }
         } else {
             let flags = if fullscreen {
-                0x00000400 | 0x00000002 | 0x00001000 // FULLSCREEN | HIDE_NAVIGATION | IMMERSIVE_STICKY
+                0x00000400 | 0x00000002 | 0x00001000
             } else {
                 0
             };
@@ -381,14 +377,16 @@ impl eframe::App for AndroidShell {
         if top > 0.0 {
             let t = Tokens::get(ui.ctx());
             if self.app.ui.backstage {
-                // Backstage: Kiri biru (nav), Kanan putih (ribbon)
-                let nav_width = 140.0; // Ukuran sidebar di mode portrait
+                // Menggunakan lebar sidebar persis seperti di backstage.rs (140.0)
+                let nav_width = 140.0;
                 let left_rect = egui::Rect::from_min_max(full.min, egui::pos2(full.min.x + nav_width, inner.min.y));
-                let right_rect = egui::Rect::from_min_max(egui::pos2(full.min.x + nav_width, full.min.y), egui::pos2(full.max.x, inner.min.y));
+                
+                // PERBAIKAN: Mulai gambar kotak putih 1 pixel lebih ke kiri agar menutupi garis sambungan
+                let right_rect = egui::Rect::from_min_max(egui::pos2(full.min.x + nav_width - 1.0, full.min.y), egui::pos2(full.max.x, inner.min.y));
+                
                 ui.painter().rect_filled(left_rect, 0.0, t.nav);
                 ui.painter().rect_filled(right_rect, 0.0, t.ribbon);
             } else {
-                // Mode Edit: Ikut warna Title Bar
                 let strip = egui::Rect::from_min_max(full.min, egui::pos2(full.max.x, inner.min.y));
                 ui.painter().rect_filled(strip, 0.0, t.title_bar);
             }
