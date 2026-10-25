@@ -31,39 +31,56 @@ fn status_bar_height_px(app: &AndroidApp) -> f32 {
         let name = env.new_string("status_bar_height")?;
         let kind = env.new_string("dimen")?;
         let pkg = env.new_string("android")?;
-        let id = env.call_method(&res, "getIdentifier", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)I", &[JValue::Object(&name), JValue::Object(&kind), JValue::Object(&pkg)])?.i()?;
-        if id == 0 { return Ok(0); }
+        let id = env
+            .call_method(
+                &res,
+                "getIdentifier",
+                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)I",
+                &[JValue::Object(&name), JValue::Object(&kind), JValue::Object(&pkg)],
+            )?
+            .i()?;
+        if id == 0 {
+            return Ok(0);
+        }
         env.call_method(&res, "getDimensionPixelSize", "(I)I", &[JValue::Int(id)])?.i()
     };
     read().map(|px| px as f32).unwrap_or(0.0)
 }
 
+/// Memaksa Android untuk tidak pernah memunculkan keyboard secara otomatis.
 fn force_hide_soft_input_on_startup(app: &AndroidApp) {
     use jni::objects::{JObject, JValue};
     let Ok(vm) = (unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }) else { return };
     let Ok(mut env) = vm.attach_current_thread() else { return };
     let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+    
     let result = (|| -> jni::errors::Result<()> {
         let window = env.call_method(&activity, "getWindow", "()Landroid/view/Window;", &[])?.l()?;
         let mode = 0x00000002 | 0x00000010;
         env.call_method(&window, "setSoftInputMode", "(I)V", &[JValue::Int(mode)])?;
         Ok(())
     })();
-    if result.is_err() { let _ = env.exception_clear(); }
+    if result.is_err() {
+        let _ = env.exception_clear();
+    }
 }
 
+/// Fix untuk ikon status bar Android 14 yang hilang (blank putih).
 fn set_status_bar_appearance(app: &AndroidApp, light_background: bool) {
     use jni::objects::{JObject, JValue};
     let Ok(vm) = (unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }) else { return };
     let Ok(mut env) = vm.attach_current_thread() else { return };
     let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+
     let result = (|| -> jni::errors::Result<()> {
         let window = env.call_method(&activity, "getWindow", "()Landroid/view/Window;", &[])?.l()?;
         let sdk = env.get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?.i()?;
-        if sdk < 30 { return Ok(()); }
+        if sdk < 30 {
+            return Ok(());
+        }
         let controller = env.call_method(&window, "getInsetsController", "()Landroid/view/WindowInsetsController;", &[])?.l()?;
         if !controller.is_null() {
-            let mask = 8;
+            let mask = 8; // APPEARANCE_LIGHT_STATUS_BARS
             if light_background {
                 env.call_method(&controller, "setSystemBarsAppearance", "(II)V", &[JValue::Int(mask), JValue::Int(mask)])?;
             } else {
@@ -72,7 +89,40 @@ fn set_status_bar_appearance(app: &AndroidApp, light_background: bool) {
         }
         Ok(())
     })();
-    if result.is_err() { let _ = env.exception_clear(); }
+    if result.is_err() {
+        let _ = env.exception_clear();
+    }
+}
+
+/// Membuat status bar transparan dan aplikasi menggambar di belakangnya (Edge-to-Edge).
+fn setup_edge_to_edge(app: &AndroidApp) {
+    use jni::objects::{JObject, JValue};
+    let Ok(vm) = (unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }) else { return };
+    let Ok(mut env) = vm.attach_current_thread() else { return };
+    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+
+    let result = (|| -> jni::errors::Result<()> {
+        let window = env.call_method(&activity, "getWindow", "()Landroid/view/Window;", &[])?.l()?;
+        // 1. Transparankan status bar dan navigation bar
+        env.call_method(&window, "setStatusBarColor", "(I)V", &[JValue::Int(0)])?;
+        env.call_method(&window, "setNavigationBarColor", "(I)V", &[JValue::Int(0)])?;
+        
+        // 2. Izinkan aplikasi menggambar di belakang system bars
+        let decor_view = env.call_method(&window, "getDecorView", "()Landroid/view/View;", &[])?.l()?;
+        let sdk = env.get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?.i()?;
+        if sdk >= 30 {
+            // Android 11+ (API 30+)
+            env.call_method(&window, "setDecorFitsSystemWindows", "(Z)V", &[JValue::Bool(0)])?;
+        } else {
+            // Android 10 dan ke bawah
+            let flags = 0x00000100 | 0x00000400; // LAYOUT_STABLE | LAYOUT_FULLSCREEN
+            env.call_method(&decor_view, "setSystemUiVisibility", "(I)V", &[JValue::Int(flags)])?;
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = env.exception_clear();
+    }
 }
 
 fn ask_for_all_files_access(app: &AndroidApp) {
@@ -82,18 +132,32 @@ fn ask_for_all_files_access(app: &AndroidApp) {
     let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
     let result = (|| -> jni::errors::Result<()> {
         let sdk = env.get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?.i()?;
-        if sdk < 30 { return Ok(()); }
-        if env.call_static_method("android/os/Environment", "isExternalStorageManager", "()Z", &[])?.z()? { return Ok(()); }
+        if sdk < 30 {
+            return Ok(());
+        }
+        if env.call_static_method("android/os/Environment", "isExternalStorageManager", "()Z", &[])?.z()? {
+            return Ok(());
+        }
         let action = env.new_string("android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION")?;
         let package = env.call_method(&activity, "getPackageName", "()Ljava/lang/String;", &[])?.l()?;
         let prefix = env.new_string("package:")?;
-        let uri_text = env.call_method(&prefix, "concat", "(Ljava/lang/String;)Ljava/lang/String;", &[JValue::Object(&package)])?.l()?;
-        let uri = env.call_static_method("android/net/Uri", "parse", "(Ljava/lang/String;)Landroid/net/Uri;", &[JValue::Object(&uri_text)])?.l()?;
-        let intent = env.new_object("android/content/Intent", "(Ljava/lang/String;Landroid/net/Uri;)V", &[JValue::Object(&action), JValue::Object(&uri)])?;
+        let uri_text = env
+            .call_method(&prefix, "concat", "(Ljava/lang/String;)Ljava/lang/String;", &[JValue::Object(&package)])?
+            .l()?;
+        let uri = env
+            .call_static_method("android/net/Uri", "parse", "(Ljava/lang/String;)Landroid/net/Uri;", &[JValue::Object(&uri_text)])?
+            .l()?;
+        let intent = env.new_object(
+            "android/content/Intent",
+            "(Ljava/lang/String;Landroid/net/Uri;)V",
+            &[JValue::Object(&action), JValue::Object(&uri)],
+        )?;
         env.call_method(&activity, "startActivity", "(Landroid/content/Intent;)V", &[JValue::Object(&intent)])?;
         Ok(())
     })();
-    if result.is_err() { let _ = env.exception_clear(); }
+    if result.is_err() {
+        let _ = env.exception_clear();
+    }
 }
 
 fn set_fullscreen(app: &AndroidApp, fullscreen: bool) {
@@ -101,28 +165,37 @@ fn set_fullscreen(app: &AndroidApp, fullscreen: bool) {
     let Ok(vm) = (unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }) else { return };
     let Ok(mut env) = vm.attach_current_thread() else { return };
     let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+
     let result = (|| -> jni::errors::Result<()> {
         let window = env.call_method(&activity, "getWindow", "()Landroid/view/Window;", &[])?.l()?;
         let decor_view = env.call_method(&window, "getDecorView", "()Landroid/view/View;", &[])?.l()?;
         let sdk = env.get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?.i()?;
+
         if sdk >= 30 {
             let controller = env.call_method(&window, "getInsetsController", "()Landroid/view/WindowInsetsController;", &[])?.l()?;
             if !controller.is_null() {
-                let mask = 1 | 2;
+                let mask = 1 | 2; // statusBars | navigationBars
                 if fullscreen {
                     env.call_method(&controller, "hide", "(I)V", &[JValue::Int(mask)])?;
-                    env.call_method(&controller, "setSystemBarsBehavior", "(I)V", &[JValue::Int(2)])?;
+                    let behavior = 2; // BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    env.call_method(&controller, "setSystemBarsBehavior", "(I)V", &[JValue::Int(behavior)])?;
                 } else {
                     env.call_method(&controller, "show", "(I)V", &[JValue::Int(mask)])?;
                 }
             }
         } else {
-            let flags = if fullscreen { 0x00000400 | 0x00000002 | 0x00001000 } else { 0 };
+            let flags = if fullscreen {
+                0x00000400 | 0x00000002 | 0x00001000 // FULLSCREEN | HIDE_NAVIGATION | IMMERSIVE_STICKY
+            } else {
+                0
+            };
             env.call_method(&decor_view, "setSystemUiVisibility", "(I)V", &[JValue::Int(flags)])?;
         }
         Ok(())
     })();
-    if result.is_err() { let _ = env.exception_clear(); }
+    if result.is_err() {
+        let _ = env.exception_clear();
+    }
 }
 
 fn services() -> Services {
@@ -161,7 +234,13 @@ impl AndroidShell {
         self.last_back = Some(now);
         self.keyboard_wanted = false;
         for pressed in [true, false] {
-            raw.events.push(egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed, repeat: false, modifiers: Default::default() });
+            raw.events.push(egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: Default::default(),
+            });
         }
         self.app.status("Press Back again to exit");
     }
@@ -174,10 +253,16 @@ impl AndroidShell {
                     let on_page = page.is_some_and(|r| r.contains(*pos));
                     if *pressed {
                         self.press_at = Some(*pos);
-                        if !on_page { self.keyboard_wanted = false; }
+                        if !on_page {
+                            self.keyboard_wanted = false;
+                        }
                     } else if let Some(start) = self.press_at.take() {
                         let dist = start.distance(*pos);
-                        if on_page && dist < TAP_SLOP_POINTS { self.keyboard_wanted = true; } else { self.keyboard_wanted = false; }
+                        if on_page && dist < TAP_SLOP_POINTS {
+                            self.keyboard_wanted = true;
+                        } else {
+                            self.keyboard_wanted = false;
+                        }
                     }
                 }
             }
@@ -188,18 +273,28 @@ impl AndroidShell {
         let ppp = ctx.pixels_per_point();
         let rect = ctx.content_rect();
         let (w_px, h_px) = (rect.width() * ppp, rect.height() * ppp);
-        if w_px <= 0.0 || h_px <= 0.0 { return; }
+        if w_px <= 0.0 || h_px <= 0.0 {
+            return;
+        }
+
         let target_scale: f32 = if self.is_portrait { 2.4 } else { 2.0 };
         let min_width = if self.is_portrait { 360.0 } else { 760.0 };
         let min_height = if self.is_portrait { 360.0 } else { 520.0 };
+
         let max_fit_scale = (w_px / min_width).min(h_px / min_height);
         let cap = target_scale.min(max_fit_scale);
+
         let native = ctx.native_pixels_per_point().unwrap_or(1.0);
         let current = self.app.ui.interface_size.percent().map_or(native, |p| f32::from(p) / 100.0);
+
         if self.app.ui.interface_size.percent().is_none() || (current <= 1.6 + 0.005 && target_scale > 1.6) {
-            if let Some(size) = InterfaceSize::from_percent((f64::from(cap) * 100.0).floor()) { self.app.ui.interface_size = size; }
+            if let Some(size) = InterfaceSize::from_percent((f64::from(cap) * 100.0).floor()) {
+                self.app.ui.interface_size = size;
+            }
         } else if current > cap + 0.005 {
-            if let Some(size) = InterfaceSize::from_percent((f64::from(cap) * 100.0).floor()) { self.app.ui.interface_size = size; }
+            if let Some(size) = InterfaceSize::from_percent((f64::from(cap) * 100.0).floor()) {
+                self.app.ui.interface_size = size;
+            }
         }
     }
 
@@ -218,57 +313,101 @@ impl eframe::App for AndroidShell {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let rect = ctx.content_rect();
         let is_portrait = rect.height() > rect.width();
+        
         if self.is_portrait != is_portrait {
             self.is_portrait = is_portrait;
             let fullscreen = !is_portrait;
             set_fullscreen(&self.android, fullscreen);
+            
+            if is_portrait {
+                setup_edge_to_edge(&self.android);
+            }
+            
             self.app.ui.interface_size = InterfaceSize::AUTO;
         }
+
         if !self.is_portrait {
-            if ctx.cumulative_frame_nr() % 30 == 0 { set_fullscreen(&self.android, true); }
+            let frame = ctx.cumulative_frame_nr();
+            if frame % 30 == 0 {
+                set_fullscreen(&self.android, true);
+            }
         }
+
         let light_mode = ctx.theme() == egui::Theme::Light;
         if light_mode != self.last_light_mode {
             self.last_light_mode = light_mode;
             set_status_bar_appearance(&self.android, light_mode);
         }
+
         self.cap_interface_size(ctx);
         self.app.logic(ctx);
         self.fit_page_after_file_screen();
-        if std::mem::take(&mut self.exit_requested) && self.app.close_requested() { ctx.send_viewport_cmd(egui::ViewportCommand::Close); }
-        if self.app.quit_requested { ctx.send_viewport_cmd(egui::ViewportCommand::Close); }
+        
+        if std::mem::take(&mut self.exit_requested) && self.app.close_requested() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        if self.app.quit_requested {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
         let mut back = false;
         raw.events.retain(|e| match e {
-            egui::Event::Key { key: egui::Key::BrowserBack, pressed, .. } => { back |= *pressed; false }
+            egui::Event::Key { key: egui::Key::BrowserBack, pressed, .. } => {
+                back |= *pressed;
+                false
+            }
             _ => true,
         });
-        if back { self.on_back(raw); }
+        if back {
+            self.on_back(raw);
+        }
         self.track_taps(raw);
         self.app.raw_input_hook(raw);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Padding UI ke bawah sebesar status bar (hanya di portrait)
         let full = ui.max_rect();
-        let top = if self.is_portrait { (self.status_bar_px / ui.ctx().pixels_per_point()).min(full.height() / 4.0) } else { 0.0 };
+        let top = if self.is_portrait {
+            (self.status_bar_px / ui.ctx().pixels_per_point()).min(full.height() / 4.0)
+        } else {
+            0.0
+        };
+        
         let mut inner = full;
         inner.min.y += top;
         if top > 0.0 {
             let strip = egui::Rect::from_min_max(full.min, egui::pos2(full.max.x, inner.min.y));
+            // Menggunakan warna panel agar menyatu dengan aplikasi
             ui.painter().rect_filled(strip, 0.0, ui.visuals().panel_fill);
         }
         ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| self.app.ui(ui));
+
         let wants_keyboard = if self.app.ui.backstage || self.app.dialog.is_some() {
             ui.ctx().egui_wants_keyboard_input()
         } else {
-            self.keyboard_wanted
+            let caret = ui.ctx().output(|o| o.ime.as_ref().map(|ime| ime.cursor_rect));
+            let caret_on_page = caret.is_some_and(|c| self.app.canvas.canvas_rect.is_some_and(|p| p.contains(c.center())));
+            if caret_on_page {
+                self.keyboard_wanted
+            } else {
+                ui.ctx().egui_wants_keyboard_input()
+            }
         };
-        if !wants_keyboard { ui.ctx().output_mut(|o| o.ime = None); }
+
+        if !wants_keyboard {
+            ui.ctx().output_mut(|o| o.ime = None);
+        }
+
         if wants_keyboard != self.keyboard_shown {
             self.keyboard_shown = wants_keyboard;
-            if wants_keyboard { self.android.show_soft_input(false); } else { self.android.hide_soft_input(false); }
+            if wants_keyboard {
+                self.android.show_soft_input(false);
+            } else {
+                self.android.hide_soft_input(false);
+            }
         }
     }
 }
@@ -276,6 +415,7 @@ impl eframe::App for AndroidShell {
 #[unsafe(no_mangle)]
 pub fn android_main(app: AndroidApp) {
     android_logger::init_once(android_logger::Config::default().with_max_level(log::LevelFilter::Info).with_tag("wordcraft"));
+
     if let Some(data) = app.internal_data_path() {
         let tmp = data.join("tmp");
         let _ = std::fs::create_dir_all(&tmp);
@@ -286,8 +426,10 @@ pub fn android_main(app: AndroidApp) {
         let _ = std::env::set_current_dir(&dir);
         unsafe { std::env::set_var("HOME", &dir) };
     }
+    
     ask_for_all_files_access(&app);
     force_hide_soft_input_on_startup(&app);
+
     let status_bar_px = status_bar_height_px(&app);
     let options = eframe::NativeOptions { android_app: Some(app.clone()), ..Default::default() };
     let android = app;
@@ -316,5 +458,7 @@ pub fn android_main(app: AndroidApp) {
             }))
         }),
     );
-    if let Err(e) = result { log::error!("WordCraft failed to start: {e}"); }
+    if let Err(e) = result {
+        log::error!("WordCraft failed to start: {e}");
+    }
 }
