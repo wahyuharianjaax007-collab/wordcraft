@@ -4,9 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths:
-      - "apps/wordcraft-android/**"
-      - ".github/workflows/android.yml"
 
 permissions:
   contents: write
@@ -36,19 +33,15 @@ jobs:
       - name: Install cargo-apk
         run: cargo install cargo-apk --locked
 
-      - name: Create a signing key
-        run: |
-          keytool -genkeypair -v \
-            -keystore "$RUNNER_TEMP/wordcraft.keystore" \
-            -alias wordcraft -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass android -keypass android \
-            -dname "CN=WordCraft"
+      - name: Decode Keystore from Secrets
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/wordcraft.keystore"
 
       - name: Build the APK
         working-directory: apps/wordcraft-android
         env:
           CARGO_APK_RELEASE_KEYSTORE: ${{ runner.temp }}/wordcraft.keystore
-          CARGO_APK_RELEASE_KEYSTORE_PASSWORD: android
+          CARGO_APK_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          CARGO_APK_RELEASE_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           export ANDROID_NDK_ROOT="$ANDROID_NDK_LATEST_HOME"
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
@@ -58,12 +51,10 @@ jobs:
         run: |
           APK=$(find target -name "*.apk" | head -n 1)
           echo "Found: $APK"
-          # PERUBAHAN: Menyesuaikan nama file dengan nomor build (run_number)
           cp "$APK" "WordCraft-build-${{ github.run_number }}.apk"
 
       - uses: actions/upload-artifact@v4
         with:
-          # PERUBAHAN: Nama artifact juga pakai nomor build
           name: WordCraft-build-${{ github.run_number }}
           path: WordCraft-build-${{ github.run_number }}.apk
 
@@ -73,5 +64,4 @@ jobs:
           tag_name: android-build-${{ github.run_number }}
           name: WordCraft Android build ${{ github.run_number }}
           prerelease: true
-          # PERUBAHAN: File yang di-release pakai nomor build
           files: WordCraft-build-${{ github.run_number }}.apk
