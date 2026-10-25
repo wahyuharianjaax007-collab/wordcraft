@@ -28,7 +28,9 @@ android_logger = "0.14"
 [package.metadata.android]
 package = "org.wordcraft.android"
 apk_name = "WordCraft"
+[package.metadata.android]
 icon = "@mipmap/ic_launcher"
+resources = "res"
 window_soft_input_mode = "stateAlwaysHidden"
 build_targets = ["aarch64-linux-android"]
 
