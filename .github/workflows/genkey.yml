@@ -1,0 +1,23 @@
+name: Generate Keystore
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate Keystore and Print Base64
+        run: |
+          keytool -genkeypair -v \
+            -keystore my.keystore \
+            -alias wordcraft -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=WordCraft"
+          
+          echo "======================================================"
+          echo "COPY TEKS DI BAWAH INI (DARI MII SAMPAI AKHIR):"
+          echo "======================================================"
+          base64 -w0 my.keystore
+          echo ""
+          echo "======================================================"
