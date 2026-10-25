@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use winit::platform::android::activity::AndroidApp;
 use wordcraft_engine::Session;
-use wordcraft_ui_egui::theme::InterfaceSize;
+use wordcraft_ui_egui::theme::{InterfaceSize, Tokens};
 use wordcraft_ui_egui::{FileDialogAnswer, FileDialogRequest, Services, WordApp};
 
 const BACK_EXIT_WINDOW: Duration = Duration::from_millis(1800);
@@ -368,7 +368,6 @@ impl eframe::App for AndroidShell {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Padding UI ke bawah sebesar status bar (hanya di portrait)
         let full = ui.max_rect();
         let top = if self.is_portrait {
             (self.status_bar_px / ui.ctx().pixels_per_point()).min(full.height() / 4.0)
@@ -378,11 +377,23 @@ impl eframe::App for AndroidShell {
         
         let mut inner = full;
         inner.min.y += top;
+        
         if top > 0.0 {
-            let strip = egui::Rect::from_min_max(full.min, egui::pos2(full.max.x, inner.min.y));
-            // Menggunakan warna panel agar menyatu dengan aplikasi
-            ui.painter().rect_filled(strip, 0.0, ui.visuals().panel_fill);
+            let t = Tokens::get(ui.ctx());
+            if self.app.ui.backstage {
+                // Backstage: Kiri biru (nav), Kanan putih (ribbon)
+                let nav_width = 140.0; // Ukuran sidebar di mode portrait
+                let left_rect = egui::Rect::from_min_max(full.min, egui::pos2(full.min.x + nav_width, inner.min.y));
+                let right_rect = egui::Rect::from_min_max(egui::pos2(full.min.x + nav_width, full.min.y), egui::pos2(full.max.x, inner.min.y));
+                ui.painter().rect_filled(left_rect, 0.0, t.nav);
+                ui.painter().rect_filled(right_rect, 0.0, t.ribbon);
+            } else {
+                // Mode Edit: Ikut warna Title Bar
+                let strip = egui::Rect::from_min_max(full.min, egui::pos2(full.max.x, inner.min.y));
+                ui.painter().rect_filled(strip, 0.0, t.title_bar);
+            }
         }
+        
         ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| self.app.ui(ui));
 
         let wants_keyboard = if self.app.ui.backstage || self.app.dialog.is_some() {
