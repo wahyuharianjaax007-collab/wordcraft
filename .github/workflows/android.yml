@@ -1,12 +1,9 @@
 name: Android APK
 
 on:
-  workflow_dispatch:
   push:
-    branches: [main]
-
-permissions:
-  contents: write
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   apk:
@@ -28,7 +25,7 @@ jobs:
         run: |
           SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKM" --licenses > /dev/null || true
-          "$SDKMANAGER" "platforms;android-30" "platforms;android-34" "build-tools;34.0.0"
+          "$SDKM" "platforms;android-30" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Install cargo-apk
         run: cargo install cargo-apk --locked
